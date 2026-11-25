@@ -1,0 +1,15 @@
+# The IFHX tool registry. ifhx fetches this file from GitHub and keeps a copy built into the binary.
+#
+# To publish a tool, add a [tools.<name>] table. Conventions (override only if you must):
+#   - releases are GitHub Releases tagged vX.Y.Z on `repo`
+#   - the binary asset is  <bin>-<platform>   (platform: x86_64-linux, aarch64-linux)
+#   - its checksum asset is <bin>-<platform>.sha256   (`sha256sum` format)
+#   - the source fallback runs `build` in a clone of the tag and takes target/release/<bin>
+
+[tools.ifhf]
+repo = "Disc0wd/ifhf"
+description = "A friendly command-line frontend for Flatpak"
+
+[tools.ifhx]
+repo = "Disc0wd/ifhx"
+description = "Installs and updates the IFHX tool suite"

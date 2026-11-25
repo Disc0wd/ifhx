@@ -1,0 +1,33 @@
+name: release
+# Push a tag like v0.2.0 (it must match the version in Cargo.toml) to publish a release with a
+# static Linux binary and its checksum. ifhx downloads exactly these assets:
+#   ifhx-x86_64-linux   and   ifhx-x86_64-linux.sha256
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tag must match Cargo.toml
+        run: |
+          want="${GITHUB_REF_NAME#v}"
+          have="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
+          test "$want" = "$have" || { echo "tag $GITHUB_REF_NAME does not match Cargo.toml version $have"; exit 1; }
+      - name: Build a static binary
+        run: |
+          rustup target add x86_64-unknown-linux-musl
+          sudo apt-get update -qq && sudo apt-get install -y -qq musl-tools
+          cargo build --release --locked --target x86_64-unknown-linux-musl
+      - name: Package
+        run: |
+          mkdir dist
+          cp target/x86_64-unknown-linux-musl/release/ifhx dist/ifhx-x86_64-linux
+          cd dist && sha256sum ifhx-x86_64-linux > ifhx-x86_64-linux.sha256 && cat ifhx-x86_64-linux.sha256
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --generate-notes
