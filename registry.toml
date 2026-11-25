@@ -10,6 +10,10 @@
 repo = "Disc0wd/ifhf"
 description = "A friendly command-line frontend for Flatpak"
 
+[tools.ifhai]
+repo = "Disc0wd/ifhai"
+description = "Makes a downloaded AppImage just work"
+
 [tools.ifhx]
 repo = "Disc0wd/ifhx"
 description = "Installs and updates the IFHX tool suite"

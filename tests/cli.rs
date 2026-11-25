@@ -659,7 +659,7 @@ fn sync_forces_a_refresh_and_reports_the_tool_count() {
     let mut io = TestIo::non_interactive();
     assert_eq!(f.run(&mut io, "sync"), 0, "{}", io.err);
     assert!(
-        io.out.contains("Tool list refreshed: 2 tools."),
+        io.out.contains("Tool list refreshed: 3 tools."),
         "{}",
         io.out
     );

@@ -210,7 +210,8 @@ mod tests {
         assert_eq!(ifhf.asset_name("x86_64-linux"), "ifhf-x86_64-linux");
         assert_eq!(ifhf.build, "cargo build --release");
         assert!(r.get("ifhx").is_some());
-        assert_eq!(r.len(), 2);
+        assert!(r.get("ifhai").is_some());
+        assert_eq!(r.len(), 3);
     }
 
     #[test]
