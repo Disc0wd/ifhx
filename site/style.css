@@ -166,3 +166,7 @@ footer nav{display:flex;gap:1.4rem;flex-wrap:wrap}
 .vs{grid-template-columns:minmax(0,1.1fr) minmax(0,1.25fr)}
 .vs .out{font-size:.76rem}
 @media (max-width:56rem){.vs{grid-template-columns:1fr}.vs .out{font-size:.8rem}}
+
+.brand{display:flex;align-items:baseline;gap:.35rem 1rem;flex-wrap:wrap}
+.aka{color:var(--mute);font-size:.92rem}
+@media (max-width:40rem){.top{flex-direction:column;align-items:flex-start;gap:.7rem}.family,.top nav{gap:.5rem 1.1rem;flex-wrap:wrap}}

@@ -1,5 +1,7 @@
 # ifhx
 
+*I fucking hate x. The install manager for everything you fucking hate.*
+
 Installs and updates the IFHX tool suite ([ifhf](https://github.com/Disc0wd/ifhf) and whatever
 comes next). One command to get a tool, one command to keep everything current, including `ifhx`
 itself.
