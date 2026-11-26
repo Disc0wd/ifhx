@@ -45,7 +45,7 @@ fn installs_a_verified_prebuilt_binary() {
             && io.out.contains("0.1.0")
             && io
                 .out
-                .contains("prebuilt binary (x86_64-linux), checksum verified"),
+                .contains("prebuilt binary (x86_64-linux), signature and checksum verified"),
         "{}",
         io.out
     );
@@ -884,4 +884,66 @@ fn an_installed_file_changed_by_the_user_is_not_overwritten_by_update() {
         std::fs::read_to_string(f.bin().join("ifhf")).unwrap(),
         "patched by hand"
     );
+}
+
+// ---- signatures ---------------------------------------------------------------------------
+
+#[test]
+fn the_signature_is_checked_against_the_asset_and_tag() {
+    let f = Fixture::new();
+    f.release("Disc0wd/ifhf", "ifhf", "v0.1.0", "x");
+    assert_eq!(f.yes("install ifhf").0, 0);
+    assert_eq!(
+        f.verifier.calls.lock().unwrap().clone(),
+        vec!["ifhf-x86_64-linux v0.1.0"]
+    );
+}
+
+#[test]
+fn an_unsigned_release_is_refused_before_anything_is_downloaded() {
+    let f = Fixture::new();
+    f.release("Disc0wd/ifhf", "ifhf", "v0.1.0", "x");
+    f.fetcher
+        .texts
+        .lock()
+        .unwrap()
+        .retain(|k, _| !k.ends_with(".minisig"));
+    let (code, io) = f.yes("install ifhf");
+    assert_eq!(code, 1);
+    assert!(io.err.contains("is not signed"), "{}", io.err);
+    assert_eq!(f.fetcher.fetches("file "), 0);
+    assert!(!f.bin().join("ifhf").exists());
+}
+
+#[test]
+fn a_signature_for_something_else_is_refused_and_leaves_no_file() {
+    let f = Fixture::new();
+    f.release("Disc0wd/ifhf", "ifhf", "v0.1.0", "x");
+    // A genuine signature, but for another tag: the "older release replayed" attack.
+    f.fetcher.texts.lock().unwrap().insert(
+        "https://github.com/Disc0wd/ifhf/releases/download/v0.1.0/ifhf-x86_64-linux.minisig".into(),
+        "sig:ifhf-x86_64-linux v0.0.9".into(),
+    );
+    let (code, io) = f.yes("install ifhf");
+    assert_eq!(code, 1);
+    assert!(io.err.contains("signature check failed"), "{}", io.err);
+    assert!(!f.bin().join("ifhf").exists() && f.state().tools.is_empty());
+    let leftovers: Vec<_> = std::fs::read_dir(f.bin()).unwrap().flatten().collect();
+    assert_eq!(
+        leftovers.len(),
+        1,
+        "only the running ifhx is in the bin dir"
+    );
+}
+
+#[test]
+fn a_registry_cannot_rename_the_binary_it_installs() {
+    let f = Fixture::new();
+    f.fetcher.texts.lock().unwrap().insert(
+        REG_URL.into(),
+        "[tools.ifhf]\nrepo='Disc0wd/ifhf'\ndescription='d'\nbin='sudo'\n".into(),
+    );
+    f.release("Disc0wd/ifhf", "ifhf", "v0.1.0", "x");
+    assert_eq!(f.yes("install ifhf").0, 0);
+    assert!(f.bin().join("ifhf").exists() && !f.bin().join("sudo").exists());
 }

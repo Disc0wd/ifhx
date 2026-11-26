@@ -29,6 +29,8 @@ pub struct Install {
 pub struct RegistryCfg {
     pub url: Option<String>,
     pub max_age_hours: u64,
+    /// Allow `ifhx add owner/repo`: programs from outside the IFHX suite. Off unless switched on.
+    pub allow_foreign: bool,
 }
 
 impl Default for General {
@@ -44,6 +46,7 @@ impl Default for RegistryCfg {
         RegistryCfg {
             url: None,
             max_age_hours: 1,
+            allow_foreign: false,
         }
     }
 }

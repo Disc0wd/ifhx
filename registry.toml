@@ -1,11 +1,12 @@
 # The IFHX tool registry. ifhx fetches this file from GitHub and keeps a copy built into the binary.
 #
-# To publish a tool, add a [tools.<name>] table. Conventions (override only if you must):
+# To publish a tool, add a [tools.<name>] table with `repo` and `description`. The rest is fixed:
 #   - releases are GitHub Releases tagged vX.Y.Z on `repo`
-#   - the binary asset is  <bin>-<platform>   (platform: x86_64-linux, aarch64-linux)
-#   - its checksum asset is <bin>-<platform>.sha256   (`sha256sum` format)
+#   - the binary asset is  <name>-<platform>   (platform: x86_64-linux, aarch64-linux)
+#   - next to it: <name>-<platform>.sha256 (`sha256sum` format) and <name>-<platform>.minisig,
+#     made with scripts/sign-release.sh. Unsigned releases are refused.
 #   - `ifhx install --source` runs `cargo build --release --locked` in a clone of the tag and takes
-#     target/release/<bin>. A registry cannot set a build command.
+#     target/release/<name>.
 
 [tools.ifhf]
 repo = "Disc0wd/ifhf"

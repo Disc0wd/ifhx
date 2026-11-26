@@ -4,6 +4,7 @@ use ifhx::config::{Config, Dirs};
 use ifhx::error::{Error, Result};
 use ifhx::fetch::Fetcher;
 use ifhx::install::{Builder, SourceJob};
+use ifhx::verify::Verifier;
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
@@ -178,6 +179,26 @@ impl Builder for MockBuilder {
     }
 }
 
+/// Accepts exactly the signature text `sig:<comment>`, which `Fixture::release` publishes.
+#[derive(Default)]
+pub struct MockVerifier {
+    pub calls: Mutex<Vec<String>>,
+}
+
+impl Verifier for MockVerifier {
+    fn verify(&self, file: &Path, sig: &str, comment: &str) -> Result<()> {
+        assert!(file.exists(), "the file to verify must exist");
+        self.calls.lock().unwrap().push(comment.to_string());
+        if sig == format!("sig:{comment}") {
+            Ok(())
+        } else {
+            Err(Error::Verify(
+                "The signature check failed (mock), so nothing was installed.".into(),
+            ))
+        }
+    }
+}
+
 pub fn sha256(bytes: &[u8]) -> String {
     Sha256::digest(bytes)
         .iter()
@@ -191,6 +212,7 @@ pub struct Fixture {
     pub dir: tempfile::TempDir,
     pub fetcher: MockFetcher,
     pub builder: MockBuilder,
+    pub verifier: MockVerifier,
     pub config: Config,
     pub dirs: Dirs,
     pub self_exe: PathBuf,
@@ -221,6 +243,7 @@ impl Fixture {
             dir,
             fetcher,
             builder: MockBuilder::default(),
+            verifier: MockVerifier::default(),
             config: Config::default(),
             dirs,
             self_exe,
@@ -245,6 +268,10 @@ impl Fixture {
             format!("{base}/{asset}.sha256"),
             format!("{}  {asset}\n", sha256(content.as_bytes())),
         );
+        self.fetcher.texts.lock().unwrap().insert(
+            format!("{base}/{asset}.minisig"),
+            format!("sig:{asset} {tag}"),
+        );
         self.fetcher
             .files
             .lock()
@@ -257,6 +284,7 @@ impl Fixture {
         let mut env = Env {
             fetcher: &self.fetcher,
             builder: &self.builder,
+            verifier: &self.verifier,
             config: &self.config,
             dirs: &self.dirs,
             io,

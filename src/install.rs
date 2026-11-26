@@ -6,6 +6,7 @@ use crate::error::{Error, Result};
 use crate::fetch::{Fetcher, valid_tag};
 use crate::registry::Tool;
 use crate::state::Record;
+use crate::verify::{self, Verifier};
 use sha2::{Digest, Sha256};
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -16,6 +17,7 @@ pub enum Method {
     Release {
         asset_url: String,
         sum_url: String,
+        sig_url: String,
         asset: String,
     },
     /// Build from source. `None` tag = the repository's default branch.
@@ -185,18 +187,33 @@ pub fn plan(
     let asset = tool.asset_name(platform);
     let base = format!("https://github.com/{}/releases/download/{tag}", tool.repo);
     let sum_url = format!("{base}/{asset}.sha256");
+    let sig_url = format!("{base}/{asset}.minisig");
     match fetcher.text(&sum_url) {
-        Ok(_) => Ok(Plan {
-            tool: tool.clone(),
-            version: tag,
-            method: Method::Release {
-                asset_url: format!("{base}/{asset}"),
-                sum_url,
-                asset,
-            },
-            dest,
-            note: None,
-        }),
+        Ok(_) => {
+            // Refuse before asking the user anything: an unsigned release is never installed.
+            match fetcher.text(&sig_url) {
+                Ok(_) => {}
+                Err(Error::NotFound(_)) => {
+                    return Err(Error::Verify(format!(
+                        "{} {tag} is not signed, so ifhx will not install it.\nIts maintainer has to sign the release (see the README), or you can build it yourself with: ifhx install {} --source",
+                        tool.name, tool.name
+                    )));
+                }
+                Err(e) => return Err(e),
+            }
+            Ok(Plan {
+                tool: tool.clone(),
+                version: tag,
+                method: Method::Release {
+                    asset_url: format!("{base}/{asset}"),
+                    sum_url,
+                    sig_url,
+                    asset,
+                },
+                dest,
+                note: None,
+            })
+        }
         Err(Error::NotFound(_)) => Err(no_binary(
             tool,
             &format!("has no prebuilt {platform} binary in release {tag}"),
@@ -225,7 +242,7 @@ pub fn sha256_file(path: &Path) -> Result<String> {
     Ok(h.finalize().iter().map(|b| format!("{b:02x}")).collect())
 }
 
-fn make_executable(path: &Path) -> Result<()> {
+pub(crate) fn make_executable(path: &Path) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))?;
     Ok(())
@@ -248,7 +265,12 @@ pub fn now_secs() -> u64 {
         .unwrap_or(0)
 }
 
-pub fn execute(plan: &Plan, fetcher: &dyn Fetcher, builder: &dyn Builder) -> Result<Record> {
+pub fn execute(
+    plan: &Plan,
+    fetcher: &dyn Fetcher,
+    builder: &dyn Builder,
+    verifier: &dyn Verifier,
+) -> Result<Record> {
     let dir = plan.dest.parent().unwrap_or_else(|| Path::new("."));
     std::fs::create_dir_all(dir)
         .map_err(|e| Error::Io(format!("Cannot create {}: {e}", dir.display())))?;
@@ -259,6 +281,7 @@ pub fn execute(plan: &Plan, fetcher: &dyn Fetcher, builder: &dyn Builder) -> Res
             Method::Release {
                 asset_url,
                 sum_url,
+                sig_url,
                 asset,
             } => {
                 let sums = fetcher.text(sum_url)?;
@@ -274,6 +297,9 @@ pub fn execute(plan: &Plan, fetcher: &dyn Fetcher, builder: &dyn Builder) -> Res
                         "The downloaded {asset} does not match its published checksum, so it was discarded.\n  expected {want}\n  got      {got}"
                     )));
                 }
+                // The checksum only catches corruption; the signature is what proves who published it.
+                let sig = fetcher.text(sig_url)?;
+                verifier.verify(&tmp, &sig, &verify::comment(asset, &plan.version))?;
             }
             Method::Source { tag } => {
                 builder.build(
@@ -299,6 +325,7 @@ pub fn execute(plan: &Plan, fetcher: &dyn Fetcher, builder: &dyn Builder) -> Res
             path: plan.dest.clone(),
             sha256,
             installed_at: now_secs(),
+            ..Default::default()
         }),
         Err(e) => {
             let _ = std::fs::remove_file(&tmp);

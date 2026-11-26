@@ -3,6 +3,7 @@ use ifhx::config::{Config, Dirs};
 use ifhx::fetch::Curl;
 use ifhx::install::{self, CargoBuilder};
 use ifhx::registry::DEFAULT_URL;
+use ifhx::verify::Minisign;
 use std::io::{BufRead, IsTerminal, Write};
 
 struct StdIo;
@@ -95,6 +96,7 @@ fn main() {
     let mut env = Env {
         fetcher: &Curl,
         builder: &CargoBuilder,
+        verifier: &Minisign,
         config: &config,
         dirs: &dirs,
         io: &mut io,

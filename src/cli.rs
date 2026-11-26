@@ -3,6 +3,8 @@ use crate::error::{Error, Result};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
     Install(Vec<String>),
+    /// `owner/name` or a github.com address.
+    Add(String),
     Remove(Vec<String>),
     Update(Vec<String>),
     Updates,
@@ -113,6 +115,14 @@ pub fn parse(args: &[String]) -> Result<Invocation> {
         Some("remove") => Command::Remove(need("remove", targets)?),
         Some("info") => Command::Info(need("info", targets)?),
         Some("update") => Command::Update(targets),
+        Some("add") => match <[String; 1]>::try_from(targets) {
+            Ok([t]) => Command::Add(t),
+            Err(_) => {
+                return usage(
+                    "'add' needs exactly one repository, for example: ifhx add owner/name",
+                );
+            }
+        },
         Some(v @ ("updates" | "list" | "available" | "sync")) => {
             none(v, &targets)?;
             match v {
@@ -141,6 +151,7 @@ USAGE
 
 COMMANDS
   install <tool>...   Install tools (a verified prebuilt binary)
+  add <owner/name>    Install a program from another GitHub repository (off by default)
   remove <tool>...    Remove tools (their own config and data are kept)
   update [<tool>...]  Update installed tools, and ifhx itself (default: all)
   updates             Show which tools have a newer release
@@ -156,6 +167,10 @@ OPTIONS
   --no-color          Disable colour (NO_COLOR is also respected)
   -h, --help          Show this help
   -V, --version       Show the version
+
+ADDING OTHER PROGRAMS
+  Set allow_foreign = true under [registry] in ~/.config/ifhx/config.toml. ifhx then checks that a
+  download is exactly the file its publisher released. It does not vet the publisher.
 
 EXIT STATUS
   0 success   1 failure   2 usage error   3 not found
@@ -175,6 +190,9 @@ mod tests {
 
     #[test]
     fn commands_parse() {
+        assert_eq!(p("add o/r").unwrap().cmd, Command::Add("o/r".into()));
+        assert!(p("add").is_err() && p("add a/b c/d").is_err());
+        assert!(p("add o/r --source").is_err() && p("add o/r --tag v1").is_err());
         assert_eq!(
             p("install ifhf ifhx").unwrap().cmd,
             Command::Install(v(&["ifhf", "ifhx"]))

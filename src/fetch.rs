@@ -11,7 +11,7 @@ use std::time::Duration;
 /// Registry, checksum and version responses are tiny; a hostile server cannot make us buffer more.
 const TEXT_MAX: u64 = 1 << 20;
 /// Largest download ifhx will accept. A server that sends more is stopped, and the partial file removed.
-const FILE_MAX: u64 = 512 << 20;
+pub const FILE_MAX: u64 = 512 << 20;
 
 pub trait Fetcher {
     /// GET a small text resource. 404 is `Error::NotFound`; anything else that fails is `Network`.
@@ -169,6 +169,23 @@ impl Curl {
     }
 }
 
+/// The tag in the address `/releases/latest` redirected to. GitHub also redirects renamed and
+/// transferred repositories, and a freed name can be claimed by someone else, so a redirect that
+/// lands on a different repository is refused rather than followed.
+fn tag_from(repo: &str, effective: &str) -> Result<Option<String>> {
+    let Some((front, tag)) = effective.split_once("/releases/tag/") else {
+        return Ok(None);
+    };
+    let landed = front.strip_prefix("https://github.com/").unwrap_or(front);
+    if !landed.eq_ignore_ascii_case(repo) {
+        return Err(Error::Verify(format!(
+            "{repo} now redirects to a different repository ({}), so ifhx will not follow it.\nIf the project really moved, check the new address yourself.",
+            landed.escape_debug()
+        )));
+    }
+    Ok(Some(tag.trim().to_string()).filter(|t| valid_tag(t)))
+}
+
 impl Fetcher for Curl {
     fn text(&self, url: &str) -> Result<String> {
         let (out, _) = self.run(&["--write-out", "\n%{http_code}"], url, None)?;
@@ -210,11 +227,7 @@ impl Fetcher for Curl {
         if code == "404" {
             return Ok(None);
         }
-        Ok(effective
-            .split("/releases/tag/")
-            .nth(1)
-            .map(|t| t.trim().to_string())
-            .filter(|t| valid_tag(t)))
+        tag_from(repo, effective)
     }
 }
 
@@ -229,6 +242,18 @@ mod tests {
             .stderr(Stdio::piped())
             .spawn()
             .unwrap()
+    }
+
+    #[test]
+    fn a_redirect_to_another_repository_is_refused() {
+        let at = |r: &str| format!("https://github.com/{r}/releases/tag/v1.0");
+        assert_eq!(tag_from("o/r", &at("o/r")).unwrap(), Some("v1.0".into()));
+        assert_eq!(tag_from("O/R", &at("o/r")).unwrap(), Some("v1.0".into()));
+        assert!(tag_from("o/r", &at("thief/r")).is_err());
+        assert_eq!(
+            tag_from("o/r", "https://github.com/o/r/releases").unwrap(),
+            None
+        );
     }
 
     #[test]

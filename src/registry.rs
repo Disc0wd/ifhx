@@ -21,6 +21,17 @@ pub struct Tool {
 }
 
 impl Tool {
+    /// A tool installed with `ifhx add`; it is never part of any registry.
+    pub fn added(name: &str, repo: &str) -> Tool {
+        Tool {
+            name: name.into(),
+            repo: repo.into(),
+            description: "Added from GitHub; not an IFHX tool".into(),
+            bin: name.into(),
+            asset: String::new(),
+        }
+    }
+
     /// Release asset name for a platform such as `x86_64-linux`.
     pub fn asset_name(&self, platform: &str) -> String {
         self.asset.replace("{platform}", platform)
@@ -37,8 +48,6 @@ struct File {
 struct Raw {
     repo: String,
     description: String,
-    bin: Option<String>,
-    asset: Option<String>,
 }
 
 /// One line of plain text: registry strings are shown on the user's terminal, so they must not
@@ -50,14 +59,14 @@ fn plain(s: &str) -> bool {
 #[derive(Debug, Clone, Default)]
 pub struct Registry(BTreeMap<String, Tool>);
 
-fn ident(s: &str) -> bool {
+pub(crate) fn ident(s: &str) -> bool {
     !s.is_empty()
         && s.chars().next().is_some_and(|c| c.is_ascii_alphanumeric())
         && s.chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
-fn repo_ok(s: &str) -> bool {
+pub(crate) fn repo_ok(s: &str) -> bool {
     let mut p = s.split('/');
     let part = |x: &str| {
         !x.is_empty()
@@ -74,9 +83,11 @@ impl Registry {
             .map_err(|e| Error::Config(format!("The tool registry is not valid TOML:\n{e}")))?;
         let mut tools = BTreeMap::new();
         for (name, r) in file.tools {
-            let bin = r.bin.unwrap_or_else(|| name.clone());
-            let asset = r.asset.unwrap_or_else(|| format!("{bin}-{{platform}}"));
-            if !ident(&name) || !ident(&bin) {
+            // The binary and asset names are always the tool's name: a registry entry cannot make a
+            // signed binary land under some other name (such as `sudo`).
+            let bin = name.clone();
+            let asset = format!("{name}-{{platform}}");
+            if !ident(&name) {
                 return Err(Error::Config(format!(
                     "Registry: '{name}' is not a valid tool name."
                 )));
@@ -87,14 +98,9 @@ impl Registry {
                     r.repo
                 )));
             }
-            if !plain(&r.description) || !plain(&asset) {
+            if !plain(&r.description) {
                 return Err(Error::Config(format!(
                     "Registry: tool '{name}' has text that is not plain (control characters or too long)."
-                )));
-            }
-            if asset.contains(['/', '\\']) || asset.contains("..") {
-                return Err(Error::Config(format!(
-                    "Registry: tool '{name}' has an invalid asset name."
                 )));
             }
             tools.insert(
@@ -221,15 +227,15 @@ mod tests {
     }
 
     #[test]
-    fn overrides_are_honoured() {
+    fn overrides_are_ignored() {
+        // Older registries could name a binary, an asset or a build command. None of them is honoured.
         let r = Registry::parse(
-            "[tools.foo]\nrepo='a/b'\ndescription='d'\nbin='foobar'\nbuild='make'\nasset='foo-{platform}.bin'\n",
+            "[tools.foo]\nrepo='a/b'\ndescription='d'\nbin='sudo'\nbuild='make'\nasset='x'\n",
         )
         .unwrap();
         let t = r.get("foo").unwrap();
-        // A `build` key from an older registry is ignored: ifhx never runs a command a registry names.
-        assert_eq!(t.bin, "foobar");
-        assert_eq!(t.asset_name("aarch64-linux"), "foo-aarch64-linux.bin");
+        assert_eq!(t.bin, "foo");
+        assert_eq!(t.asset_name("aarch64-linux"), "foo-aarch64-linux");
     }
 
     #[test]
@@ -239,8 +245,6 @@ mod tests {
             "[tools.x]\nrepo='a'\ndescription='d'\n",
             "[tools.x]\nrepo='a/b/c'\ndescription='d'\n",
             "[tools.x]\nrepo='../b'\ndescription='d'\n",
-            "[tools.x]\nrepo='a/b'\ndescription='d'\nbin='../evil'\n",
-            "[tools.x]\nrepo='a/b'\ndescription='d'\nasset='../../etc/passwd'\n",
             "[tools.x]\nrepo='a b/c'\ndescription='d'\n",
             r#"[tools.x]
 repo = "a/b"
@@ -248,10 +252,6 @@ description = "fake \u001b[2J prompt""#,
             r#"[tools.x]
 repo = "a/b"
 description = "two\nlines""#,
-            r#"[tools.x]
-repo = "a/b"
-description = "d"
-asset = "x\u001b""#,
             "[tools.x]\ndescription='no repo'\n",
             "not toml [",
         ] {

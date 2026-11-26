@@ -2,10 +2,13 @@ use crate::cli::{self, Command, HELP, Invocation, Opts};
 use crate::config::{Config, Dirs};
 use crate::error::{Error, Result};
 use crate::fetch::Fetcher;
+use crate::foreign::{self, Staged};
+use crate::github;
 use crate::install::{self, Builder, Plan};
 use crate::output::{self, Style};
 use crate::registry::{self, Registry, Tool};
 use crate::state::{Record, State};
+use crate::verify::Verifier;
 use crate::version;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -26,6 +29,7 @@ pub trait Io {
 pub struct Env<'a> {
     pub fetcher: &'a dyn Fetcher,
     pub builder: &'a dyn Builder,
+    pub verifier: &'a dyn Verifier,
     pub config: &'a Config,
     pub dirs: &'a Dirs,
     pub io: &'a mut dyn Io,
@@ -48,6 +52,7 @@ fn self_record(env: &Env) -> Record {
         path: env.self_exe.clone(),
         sha256: String::new(),
         installed_at: 0,
+        ..Default::default()
     }
 }
 
@@ -173,6 +178,7 @@ pub fn execute(env: &mut Env, inv: Invocation) -> Result<()> {
             Ok(())
         }
         Command::Install(n) => install(env, &opts, &n),
+        Command::Add(r) => add(env, &opts, &r),
         Command::Remove(n) => remove(env, &opts, &n),
         Command::Update(n) => update(env, &opts, &n),
         Command::Updates => updates(env, &opts),
@@ -186,7 +192,7 @@ pub fn execute(env: &mut Env, inv: Invocation) -> Result<()> {
 fn describe(st: Style, p: &Plan, platform: &str) -> String {
     let how = match &p.method {
         install::Method::Release { .. } => {
-            format!("prebuilt binary ({platform}), checksum verified")
+            format!("prebuilt binary ({platform}), signature and checksum verified")
         }
         install::Method::Source { .. } => "built from source with cargo".to_string(),
     };
@@ -219,7 +225,7 @@ fn run_plans(env: &mut Env, st: Style, plans: Vec<Plan>, verb: &str, action: &st
     let (mut done, mut failed) = (Vec::new(), Vec::new());
     let mut self_updated = false;
     for p in &plans {
-        match install::execute(p, env.fetcher, env.builder) {
+        match install::execute(p, env.fetcher, env.builder, env.verifier) {
             Ok(rec) => {
                 if p.tool.name == SELF {
                     self_updated = true;
@@ -301,10 +307,7 @@ fn install(env: &mut Env, opts: &Opts, names: &[String]) -> Result<()> {
         // Never replace a file ifhx did not put there: a registry or repository must not be able to
         // shadow a command the user already has.
         if std::fs::symlink_metadata(&dest).is_ok() {
-            problems.push(Error::Failed(format!(
-                "{} already exists and was not installed by ifhx, so it was left alone.\nMove or delete it, then run this again.",
-                dest.display()
-            )));
+            problems.push(already_there(&dest));
             continue;
         }
         match install::plan(
@@ -341,6 +344,175 @@ fn install(env: &mut Env, opts: &Opts, names: &[String]) -> Result<()> {
     run_plans(env, st, plans, "Installed", "install")
 }
 
+/// `owner/name`, also accepted as a github.com address.
+fn repo_argument(arg: &str) -> Result<String> {
+    let s = arg
+        .strip_prefix("https://github.com/")
+        .unwrap_or(arg)
+        .trim_end_matches('/');
+    let s = s.strip_suffix(".git").unwrap_or(s);
+    if registry::repo_ok(s) {
+        Ok(s.to_string())
+    } else {
+        Err(Error::Usage(format!(
+            "'{}' is not a GitHub repository. Use the form owner/name.",
+            arg.escape_debug()
+        )))
+    }
+}
+
+fn arch(env: &Env) -> String {
+    env.platform
+        .split('-')
+        .next()
+        .unwrap_or_default()
+        .to_string()
+}
+
+fn foreign_disabled(env: &Env) -> Error {
+    let file = env.dirs.config_file.as_ref().map_or_else(
+        || "~/.config/ifhx/config.toml".to_string(),
+        |p| p.display().to_string(),
+    );
+    Error::Failed(format!(
+        "ifhx only installs IFHX tools unless you allow more.\n\nTo add programs from other GitHub repositories, put this in {file}:\n\n  [registry]\n  allow_foreign = true\n\nifhx will then check that a download is exactly the file its publisher released. It does not vet the publisher."
+    ))
+}
+
+fn already_there(dest: &Path) -> Error {
+    Error::Failed(format!(
+        "{} already exists and was not installed by ifhx, so it was left alone.\nMove or delete it, then run this again.",
+        dest.display()
+    ))
+}
+
+fn describe_added(st: Style, s: &Staged, dest: &Path) -> String {
+    let check = match s.checked {
+        Some(how) => format!("matches {how}"),
+        None => "UNVERIFIED: the publisher gave no checksum to compare with".to_string(),
+    };
+    output::block(
+        st,
+        &s.name,
+        &[
+            ("From", format!("github.com/{}", s.repo)),
+            ("Version", version::display(&s.version).to_string()),
+            ("File", s.asset.clone()),
+            ("Check", check),
+            (
+                "Trust",
+                "not an IFHX tool; ifhx does not vet its publisher".into(),
+            ),
+            ("Install", dest.display().to_string()),
+        ],
+    )
+}
+
+fn add(env: &mut Env, opts: &Opts, target: &str) -> Result<()> {
+    if !env.config.registry.allow_foreign {
+        return Err(foreign_disabled(env));
+    }
+    let repo = repo_argument(target)?;
+    let st = out_style(env, opts.no_color);
+    let reg = load_registry(env, false);
+    let mut state = load_state(env)?;
+    if let Some((n, r)) = state.tools.iter().find(|(_, r)| {
+        r.repo
+            .as_deref()
+            .is_some_and(|x| x.eq_ignore_ascii_case(&repo))
+    }) {
+        env.io.out(&format!(
+            "{}\n",
+            st.dim(&format!(
+                "Already installed: {n} {} (run `ifhx update {n}` for a newer one)",
+                version::display(&r.version)
+            ))
+        ));
+        return Ok(());
+    }
+    if let Some(t) = reg.iter().find(|t| t.repo.eq_ignore_ascii_case(&repo)) {
+        return Err(Error::Failed(format!(
+            "{repo} is the IFHX tool {}. Install it with: ifhx install {}",
+            t.name, t.name
+        )));
+    }
+    let release = github::latest_release(env.fetcher, &repo)?;
+    let dir = bin_dir(env);
+    // Dropping `staged` on any return below removes the downloaded file.
+    let staged = foreign::prepare(env.fetcher, &repo, &release, &arch(env), None, &dir)?;
+    let name = staged.name.clone();
+    if name == SELF || reg.get(&name).is_some() {
+        return Err(Error::Failed(format!(
+            "{repo} installs a program called '{name}', which is the name of an IFHX tool, so ifhx will not add it."
+        )));
+    }
+    if state.tools.contains_key(&name) {
+        return Err(Error::Failed(format!(
+            "A tool called '{name}' is already installed. Remove it first: ifhx remove {name}"
+        )));
+    }
+    let dest = dir.join(&name);
+    if std::fs::symlink_metadata(&dest).is_ok() {
+        return Err(already_there(&dest));
+    }
+    env.io.out(&describe_added(st, &staged, &dest));
+    confirm(
+        env,
+        st,
+        &format!("Add {name} from {repo}?"),
+        opts.yes || !env.config.general.confirm,
+    )?;
+    let done = format!("{name} {}", version::display(&staged.version));
+    let record = foreign::commit(staged, &dest)?;
+    state.tools.insert(name, record);
+    state.save(&env.dirs.state_file)?;
+    env.io.out(&output::done_lines(st, "Installed", &[done]));
+    if let Some(w) = path_warning(env, &dir) {
+        notes(env, &[w]);
+    }
+    Ok(())
+}
+
+/// Update one tool that was added with `ifhx add`, with the same checks as when it was added.
+fn update_added(env: &mut Env, c: &Check, rec: &Record) -> Result<String> {
+    let repo = &c.tool.repo;
+    let release = github::latest_release(env.fetcher, repo)?;
+    if !version::is_newer(&release.tag, &rec.version) {
+        return Err(Error::Failed(format!(
+            "GitHub reports {} as the latest release, which is not newer than the installed one.",
+            release.tag
+        )));
+    }
+    let dir = c.dest.parent().unwrap_or_else(|| Path::new("."));
+    let staged = foreign::prepare(
+        env.fetcher,
+        repo,
+        &release,
+        &arch(env),
+        rec.pattern.as_deref(),
+        dir,
+    )?;
+    if staged.name != c.name {
+        return Err(Error::Failed(format!(
+            "The new release installs a program called '{}' instead of '{}'. Remove it and add it again if that is expected.",
+            staged.name, c.name
+        )));
+    }
+    // A publisher that gave checksums and suddenly stops is exactly what a tampered release looks like.
+    if rec.verified && staged.checked.is_none() {
+        return Err(Error::Verify(format!(
+            "{} was verified when it was added, but this release publishes no checksum, so it was not installed.",
+            c.name
+        )));
+    }
+    let done = format!("{} {}", c.name, version::display(&staged.version));
+    let record = foreign::commit(staged, &c.dest)?;
+    let mut state = load_state(env)?;
+    state.tools.insert(c.name.clone(), record);
+    state.save(&env.dirs.state_file)?;
+    Ok(done)
+}
+
 struct Check {
     name: String,
     current: String,
@@ -350,6 +522,8 @@ struct Check {
     dest: PathBuf,
     /// SHA-256 recorded at install time; empty for ifhx itself.
     sha256: String,
+    /// The install record of a tool added with `ifhx add`; None for registry tools.
+    added: Option<Record>,
 }
 
 impl Check {
@@ -386,19 +560,32 @@ fn check_all(env: &mut Env, names: &[String]) -> Result<Vec<Check>> {
     let mut skipped = Vec::new();
     for n in wanted {
         let rec = &have[&n];
-        let Some(tool) = reg.get(&n) else {
-            skipped.push(format!(
-                "{n} is installed but not in the registry, so it cannot be updated."
-            ));
-            continue;
+        let tool = match &rec.repo {
+            Some(_) if !env.config.registry.allow_foreign => {
+                skipped.push(format!(
+                    "{n} was added from outside the IFHX suite and allow_foreign is off, so it is not checked."
+                ));
+                continue;
+            }
+            Some(repo) => Tool::added(&n, repo),
+            None => match reg.get(&n) {
+                Some(t) => t.clone(),
+                None => {
+                    skipped.push(format!(
+                        "{n} is installed but not in the registry, so it cannot be updated."
+                    ));
+                    continue;
+                }
+            },
         };
         out.push(Check {
             latest: env.fetcher.latest_tag(&tool.repo),
             name: n.clone(),
             current: rec.version.clone(),
-            tool: tool.clone(),
+            tool,
             dest: rec.path.clone(),
             sha256: rec.sha256.clone(),
+            added: rec.repo.is_some().then(|| rec.clone()),
         });
     }
     notes(env, &skipped);
@@ -512,6 +699,7 @@ fn update(env: &mut Env, opts: &Opts, names: &[String]) -> Result<()> {
         opts.yes || !env.config.general.confirm,
     )?;
     let mut plans = Vec::new();
+    let mut added = Vec::new();
     let mut failed = Vec::new();
     for c in todo {
         // The installed file must still be the one ifhx wrote; otherwise the user changed it.
@@ -524,6 +712,17 @@ fn update(env: &mut Env, opts: &Opts, names: &[String]) -> Result<()> {
                     c.name
                 ),
             ));
+            continue;
+        }
+        if let Some(rec) = &c.added {
+            if opts.source {
+                failed.push((
+                    c.name.clone(),
+                    "Tools added with `ifhx add` are never built from source.".to_string(),
+                ));
+            } else {
+                added.push((c, rec));
+            }
             continue;
         }
         match install::plan(
@@ -543,6 +742,16 @@ fn update(env: &mut Env, opts: &Opts, names: &[String]) -> Result<()> {
     } else {
         run_plans(env, st, plans, "Updated", "update")
     };
+    let mut updated = Vec::new();
+    for (c, rec) in added {
+        match update_added(env, c, rec) {
+            Ok(done) => updated.push(done),
+            Err(e) => failed.push((c.name.clone(), e.to_string())),
+        }
+    }
+    if !updated.is_empty() {
+        env.io.out(&output::done_lines(st, "Updated", &updated));
+    }
     if failed.is_empty() {
         return result;
     }
@@ -624,7 +833,11 @@ fn info(env: &mut Env, opts: &Opts, names: &[String]) -> Result<()> {
     let mut problems = Vec::new();
     let mut blocks = Vec::new();
     for n in names {
-        let Some(t) = reg.get(n) else {
+        let own = have.get(n).and_then(|r| r.repo.as_deref());
+        let Some(t) = own
+            .map(|repo| Tool::added(n, repo))
+            .or_else(|| reg.get(n).cloned())
+        else {
             problems.push(unknown_tool(n));
             continue;
         };

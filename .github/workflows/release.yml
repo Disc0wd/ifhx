@@ -1,5 +1,5 @@
 name: release
-# Push a tag like v0.2.0 (it must match the version in Cargo.toml) to publish a release with a
+# Push a tag like v0.2.0 (it must match the version in Cargo.toml) to draft a release with a
 # static Linux binary and its checksum. ifhx downloads exactly these assets:
 #   ifhx-x86_64-linux   and   ifhx-x86_64-linux.sha256
 on:
@@ -27,7 +27,9 @@ jobs:
           mkdir dist
           cp target/x86_64-unknown-linux-musl/release/ifhx dist/ifhx-x86_64-linux
           cd dist && sha256sum ifhx-x86_64-linux > ifhx-x86_64-linux.sha256 && cat ifhx-x86_64-linux.sha256
-      - name: Publish
+      # A draft is invisible to users. The maintainer signs it offline, which publishes it:
+      # ifhx/scripts/sign-release.sh ifhx <tag>. No signing key is ever stored in CI.
+      - name: Create a draft release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --generate-notes
+        run: gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --generate-notes --draft
