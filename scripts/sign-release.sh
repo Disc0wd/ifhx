@@ -26,6 +26,15 @@ done
 [ -n "$pub" ] || { echo "no pinned public key found in src/verify.rs" >&2; exit 1; }
 
 draft=$(gh release view "$tag" -R "$repo" --json isDraft --jq .isDraft)
+# From ifhx 0.2.0 on every tool must be signed, so do not publish an ifhx that would refuse the others.
+if [ "$tool" = ifhx ] && [ "$draft" = true ]; then
+  for other in ifhf ifhai; do
+    assets=$(gh release view -R "Disc0wd/$other" --json assets --jq '.assets[].name')
+    grep -q '\.minisig$' <<<"$assets" ||
+      { echo "sign $other first (its latest release has no signature): $0 $other <tag>" >&2; exit 1; }
+  done
+fi
+
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 gh release download "$tag" -R "$repo" -D "$work" -p "$tool-*-linux" -p "$tool-*-linux.sha256"
