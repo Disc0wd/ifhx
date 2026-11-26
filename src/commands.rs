@@ -298,6 +298,15 @@ fn install(env: &mut Env, opts: &Opts, names: &[String]) -> Result<()> {
             continue;
         }
         let dest = bin_dir(env).join(&tool.bin);
+        // Never replace a file ifhx did not put there: a registry or repository must not be able to
+        // shadow a command the user already has.
+        if std::fs::symlink_metadata(&dest).is_ok() {
+            problems.push(Error::Failed(format!(
+                "{} already exists and was not installed by ifhx, so it was left alone.\nMove or delete it, then run this again.",
+                dest.display()
+            )));
+            continue;
+        }
         match install::plan(
             tool,
             env.fetcher,
@@ -339,6 +348,8 @@ struct Check {
     latest: Result<Option<String>>,
     tool: Tool,
     dest: PathBuf,
+    /// SHA-256 recorded at install time; empty for ifhx itself.
+    sha256: String,
 }
 
 impl Check {
@@ -387,6 +398,7 @@ fn check_all(env: &mut Env, names: &[String]) -> Result<Vec<Check>> {
             current: rec.version.clone(),
             tool: tool.clone(),
             dest: rec.path.clone(),
+            sha256: rec.sha256.clone(),
         });
     }
     notes(env, &skipped);
@@ -502,6 +514,18 @@ fn update(env: &mut Env, opts: &Opts, names: &[String]) -> Result<()> {
     let mut plans = Vec::new();
     let mut failed = Vec::new();
     for c in todo {
+        // The installed file must still be the one ifhx wrote; otherwise the user changed it.
+        if !c.sha256.is_empty() && install::sha256_file(&c.dest).is_ok_and(|now| now != c.sha256) {
+            failed.push((
+                c.name.clone(),
+                format!(
+                    "{} was changed after ifhx installed it, so it was left alone.\nRemove it with `ifhx remove {}` and install it again.",
+                    c.dest.display(),
+                    c.name
+                ),
+            ));
+            continue;
+        }
         match install::plan(
             &c.tool,
             env.fetcher,

@@ -38,7 +38,7 @@ After that, `ifhx update` keeps it current. Or build from source: `cargo install
 
 | Command | What it does |
 |:---|:---|
-| `ifhx install <tool>...` | Install tools: a prebuilt binary if one exists, otherwise built from source |
+| `ifhx install <tool>...` | Install tools from a verified prebuilt binary (`--source` builds from source instead) |
 | `ifhx update [<tool>...]` | Update installed tools (default: all), and `ifhx` itself, last |
 | `ifhx updates` | Show which tools have a newer release; changes nothing |
 | `ifhx list` | Installed tools, versions, how they were installed, where |
@@ -63,8 +63,12 @@ Exit status: `0` ok, `1` failure, `2` usage error, `3` not found, `5` confirmati
 - **Install.** The release asset `<bin>-<platform>` is downloaded next to its destination, its
   SHA-256 is checked against `<bin>-<platform>.sha256`, and it is moved into place with a single
   `rename`. A failed download, a bad checksum or a crash leaves the previous version untouched.
-- **Source fallback.** If a release has no binary for your platform (or has no release at all),
-  ifhx clones the tag and runs `cargo build --release`. That needs `git` and `cargo`.
+- **Source builds are opt-in.** If a release has no binary for your platform, ifhx says so and stops.
+  `--source` clones the tag and runs `cargo build --release --locked` in a private temporary
+  directory. That needs `git` and `cargo`, and it runs the project's own build scripts, so it never
+  happens automatically, not even with `--yes`.
+- **Nothing it did not install is overwritten.** If the destination already holds a file ifhx did not
+  put there, or one you changed after it was installed, ifhx leaves it alone and tells you.
 - **Self-update.** `ifhx` is a tool like any other. Replacing the running binary is safe on Linux
   because the swap is a `rename`.
 - **State.** What is installed is recorded in `~/.local/state/ifhx/installed.toml`. A damaged file
@@ -83,7 +87,11 @@ Be clear about what is and is not protected:
 - The registry decides which repositories ifhx will install from. It comes from this repository's
   `main` branch; treat write access to it accordingly. Entries are validated (names, `owner/name`
   repos, asset names) before use and a malformed registry is never cached.
-- Source builds run the registry's build command (`cargo build --release`) in a clone of the tag.
+- A registry can name a repository, a binary and an asset, nothing more: it cannot set a command to
+  run. Its text must be a single plain line (no control characters), because it is shown on your terminal.
+- Responses are size-limited (1 MiB for text, 512 MiB for a download); a server that sends more is
+  stopped.
+- Source builds (`--source` only) run the project's own build scripts as you. Only build projects you trust.
 
 ## Configuration
 
@@ -116,7 +124,7 @@ on your `PATH`.
    [tools.ifhz]
    repo = "Disc0wd/ifhz"
    description = "What it does"
-   # optional: bin, build, asset
+   # optional: bin, asset
    ```
 
 ## Development
@@ -126,7 +134,7 @@ cargo fmt && cargo clippy --all-targets -- -D warnings && cargo test
 ```
 
 All network and source-build behaviour is behind two traits (`Fetcher`, `Builder`) and tested
-with fakes: verified install, corrupted and malformed downloads, source fallback, update ordering,
+with fakes: verified install, corrupted and malformed downloads, source builds, update ordering,
 self-update, partial failures, every registry layer, and presentation. Tests never touch the
 network or your real install directory.
 

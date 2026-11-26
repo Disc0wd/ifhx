@@ -17,7 +17,6 @@ pub struct Tool {
     pub repo: String,
     pub description: String,
     pub bin: String,
-    pub build: String,
     asset: String,
 }
 
@@ -39,8 +38,13 @@ struct Raw {
     repo: String,
     description: String,
     bin: Option<String>,
-    build: Option<String>,
     asset: Option<String>,
+}
+
+/// One line of plain text: registry strings are shown on the user's terminal, so they must not
+/// carry escape sequences that could redraw the screen or fake a prompt.
+fn plain(s: &str) -> bool {
+    s.chars().count() <= 200 && !s.chars().any(char::is_control)
 }
 
 #[derive(Debug, Clone, Default)]
@@ -83,12 +87,16 @@ impl Registry {
                     r.repo
                 )));
             }
+            if !plain(&r.description) || !plain(&asset) {
+                return Err(Error::Config(format!(
+                    "Registry: tool '{name}' has text that is not plain (control characters or too long)."
+                )));
+            }
             if asset.contains(['/', '\\']) || asset.contains("..") {
                 return Err(Error::Config(format!(
                     "Registry: tool '{name}' has an invalid asset name."
                 )));
             }
-            let build = r.build.unwrap_or_else(|| "cargo build --release".into());
             tools.insert(
                 name.clone(),
                 Tool {
@@ -96,7 +104,6 @@ impl Registry {
                     repo: r.repo,
                     description: r.description,
                     bin,
-                    build,
                     asset,
                 },
             );
@@ -208,7 +215,6 @@ mod tests {
         assert_eq!(ifhf.repo, "Disc0wd/ifhf");
         assert_eq!(ifhf.bin, "ifhf");
         assert_eq!(ifhf.asset_name("x86_64-linux"), "ifhf-x86_64-linux");
-        assert_eq!(ifhf.build, "cargo build --release");
         assert!(r.get("ifhx").is_some());
         assert!(r.get("ifhai").is_some());
         assert_eq!(r.len(), 3);
@@ -221,7 +227,8 @@ mod tests {
         )
         .unwrap();
         let t = r.get("foo").unwrap();
-        assert_eq!((t.bin.as_str(), t.build.as_str()), ("foobar", "make"));
+        // A `build` key from an older registry is ignored: ifhx never runs a command a registry names.
+        assert_eq!(t.bin, "foobar");
         assert_eq!(t.asset_name("aarch64-linux"), "foo-aarch64-linux.bin");
     }
 
@@ -235,6 +242,16 @@ mod tests {
             "[tools.x]\nrepo='a/b'\ndescription='d'\nbin='../evil'\n",
             "[tools.x]\nrepo='a/b'\ndescription='d'\nasset='../../etc/passwd'\n",
             "[tools.x]\nrepo='a b/c'\ndescription='d'\n",
+            r#"[tools.x]
+repo = "a/b"
+description = "fake \u001b[2J prompt""#,
+            r#"[tools.x]
+repo = "a/b"
+description = "two\nlines""#,
+            r#"[tools.x]
+repo = "a/b"
+description = "d"
+asset = "x\u001b""#,
             "[tools.x]\ndescription='no repo'\n",
             "not toml [",
         ] {

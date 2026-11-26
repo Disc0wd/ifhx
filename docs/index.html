@@ -230,7 +230,7 @@ ifhx   0.1.0  self     ~/.local/bin/ifhx</pre></div>
 curl -fsSLO https://github.com/Disc0wd/ifhx/releases/latest/download/ifhx-x86_64-linux
 curl -fsSL  https://github.com/Disc0wd/ifhx/releases/latest/download/ifhx-x86_64-linux.sha256 | sha256sum -c -
 install -Dm755 ifhx-x86_64-linux ~/.local/bin/ifhx</pre>
-      <p class="fine">Or build it: <code>cargo install --git https://github.com/Disc0wd/ifhx</code>. Linux, x86_64 binaries (other platforms build from source).</p>
+      <p class="fine">Or build it: <code>cargo install --git https://github.com/Disc0wd/ifhx</code>. Linux, x86_64 binaries (for other platforms, <code>--source</code> builds from source).</p>
     </div>
   </div>
 
@@ -252,7 +252,7 @@ install -Dm755 ifhx-x86_64-linux ~/.local/bin/ifhx</pre>
     <h2 id="h-cmds">Eight commands.</h2>
     <table class="tbl">
       <tbody>
-        <tr><td><code>ifhx install &lt;tool&gt;…</code></td><td>Install tools: a prebuilt binary, or built from source</td></tr>
+        <tr><td><code>ifhx install &lt;tool&gt;…</code></td><td>Install tools from a verified prebuilt binary</td></tr>
         <tr><td><code>ifhx update [&lt;tool&gt;…]</code></td><td>Update tools (default: all) and ifhx itself</td></tr>
         <tr><td><code>ifhx updates</code></td><td>See what has a newer release, change nothing</td></tr>
         <tr><td><code>ifhx list</code> / <code>available</code></td><td>What is installed / everything in the registry</td></tr>
@@ -269,7 +269,8 @@ install -Dm755 ifhx-x86_64-linux ~/.local/bin/ifhx</pre>
     <ul class="rules">
       <li><b>Verified before it replaces anything.</b><span>A binary is downloaded next to its destination, checked against the SHA-256 published in the same release, and only then moved into place in one atomic step.</span></li>
       <li><b>A failure changes nothing.</b><span>A bad checksum, a dropped connection or a crash leaves the version you had exactly as it was, and the install record is only updated after the file is in place.</span></li>
-      <li><b>No binary for your platform? It builds.</b><span>If a release has no prebuilt file for your system, ifhx builds the tagged source with <code>cargo</code> instead.</span></li>
+      <li><b>It never builds code behind your back.</b><span>If a release has no prebuilt file for your system, ifhx says so and stops. Building from source only happens when you pass <code>--source</code>, since that runs the project's own build scripts.</span></li>
+      <li><b>It will not overwrite what it did not install.</b><span>A file already at the destination that ifhx did not put there, or one you edited afterwards, is left alone.</span></li>
       <li><b>Works offline.</b><span>The tool list comes from a fresh cache, the network, a stale cache, or a copy compiled into ifhx, in that order, so it never fails just because GitHub is unreachable.</span></li>
       <li><b>Updates itself last.</b><span><code>ifhx update</code> updates every tool and then replaces ifhx itself, which is safe on Linux because the swap is a rename.</span></li>
       <li><b>Honest about limits.</b><span>The checksum travels with the release, so it catches corruption, not a compromised repository. Signed releases would be the next step, and the registry is only as trustworthy as this repository's main branch.</span></li>

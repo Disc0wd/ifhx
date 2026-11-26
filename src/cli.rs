@@ -140,7 +140,7 @@ USAGE
   ifhx <command> [options] [tools...]
 
 COMMANDS
-  install <tool>...   Install tools (prebuilt binary, or built from source)
+  install <tool>...   Install tools (a verified prebuilt binary)
   remove <tool>...    Remove tools (their own config and data are kept)
   update [<tool>...]  Update installed tools, and ifhx itself (default: all)
   updates             Show which tools have a newer release

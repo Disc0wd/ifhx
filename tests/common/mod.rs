@@ -161,12 +161,10 @@ pub struct MockBuilder {
 
 impl Builder for MockBuilder {
     fn build(&self, job: &SourceJob, out: &Path) -> Result<()> {
-        self.jobs.lock().unwrap().push(format!(
-            "{} {} {}",
-            job.repo,
-            job.tag.unwrap_or("HEAD"),
-            job.build
-        ));
+        self.jobs
+            .lock()
+            .unwrap()
+            .push(format!("{} {}", job.repo, job.tag.unwrap_or("HEAD")));
         if *self.fail.lock().unwrap() {
             return Err(Error::Failed(
                 "Building from source needs both git and cargo (mock).".into(),

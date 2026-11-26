@@ -2,8 +2,16 @@
 //! so ifhx needs no TLS stack of its own and inherits the system's certificates and proxy settings.
 
 use crate::error::{Error, Result};
+use std::io::Read;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
+
+/// Registry, checksum and version responses are tiny; a hostile server cannot make us buffer more.
+const TEXT_MAX: u64 = 1 << 20;
+/// Largest download ifhx will accept. A server that sends more is stopped, and the partial file removed.
+const FILE_MAX: u64 = 512 << 20;
 
 pub trait Fetcher {
     /// GET a small text resource. 404 is `Error::NotFound`; anything else that fails is `Network`.
@@ -38,15 +46,88 @@ pub fn valid_tag(t: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || "._+-".contains(c))
 }
 
+/// What came back from a supervised curl run.
+struct Ran {
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+    ok: bool,
+    too_big: bool,
+}
+
+fn read_capped(mut r: impl Read, cap: u64, over: &AtomicBool) -> Vec<u8> {
+    let (mut buf, mut chunk) = (Vec::new(), [0u8; 8192]);
+    loop {
+        match r.read(&mut chunk) {
+            Ok(0) | Err(_) => break,
+            Ok(n) if (buf.len() + n) as u64 > cap => {
+                over.store(true, Ordering::Relaxed);
+                break;
+            }
+            Ok(n) => buf.extend_from_slice(&chunk[..n]),
+        }
+    }
+    buf
+}
+
+/// Wait for `child`, killing it as soon as it prints more than `text_cap` bytes or, when it is
+/// writing to `file`, that file grows past `file_cap`. curl's own size option only works when the
+/// server announces a length, so this does not rely on it.
+fn supervise(mut child: Child, text_cap: u64, file: Option<&Path>, file_cap: u64) -> Ran {
+    let (out, err) = (child.stdout.take(), child.stderr.take());
+    let over = AtomicBool::new(false);
+    std::thread::scope(|s| {
+        let ho = s.spawn(|| {
+            out.map(|o| read_capped(o, text_cap, &over))
+                .unwrap_or_default()
+        });
+        let he = s.spawn(|| {
+            let mut v = Vec::new();
+            if let Some(mut e) = err {
+                let _ = (&mut e).take(64 * 1024).read_to_end(&mut v);
+                let _ = std::io::copy(&mut e, &mut std::io::sink());
+            }
+            v
+        });
+        let grown = || file.is_some_and(|p| std::fs::metadata(p).is_ok_and(|m| m.len() > file_cap));
+        let (mut ok, mut too_big) = (false, false);
+        loop {
+            match child.try_wait() {
+                Ok(Some(st)) => {
+                    ok = st.success();
+                    break;
+                }
+                Ok(None) => {}
+                Err(_) => break,
+            }
+            if over.load(Ordering::Relaxed) || grown() {
+                let _ = child.kill();
+                let _ = child.wait();
+                too_big = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let stdout = ho.join().unwrap_or_default();
+        Ran {
+            too_big: too_big || over.load(Ordering::Relaxed) || grown(),
+            ok,
+            stdout,
+            stderr: he.join().unwrap_or_default(),
+        }
+    })
+}
+
 impl Curl {
-    fn run(&self, extra: &[&str], url: &str) -> Result<(Vec<u8>, String)> {
-        let out = Command::new("curl")
+    fn run(&self, extra: &[&str], url: &str, file: Option<&Path>) -> Result<(Vec<u8>, String)> {
+        let child = Command::new("curl")
             .args(BASE)
             .args(["--user-agent", concat!("ifhx/", env!("CARGO_PKG_VERSION"))])
             .args(extra)
             .arg(url)
             .stdin(Stdio::null())
-            .output()
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
             .map_err(|e| {
                 if e.kind() == std::io::ErrorKind::NotFound {
                     Error::Network(
@@ -56,16 +137,24 @@ impl Curl {
                     Error::Network(format!("could not run curl: {e}"))
                 }
             })?;
-        if !out.status.success() {
-            let host = url.split('/').nth(2).unwrap_or(url);
+        let host = url.split('/').nth(2).unwrap_or(url);
+        // A status code or a tiny body comes back on stdout; a download goes to the file.
+        let cap = if file.is_some() { 64 * 1024 } else { TEXT_MAX };
+        let ran = supervise(child, cap, file, FILE_MAX);
+        if ran.too_big {
+            return Err(Error::Network(format!(
+                "The response from {host} is larger than ifhx accepts, so it was stopped."
+            )));
+        }
+        if !ran.ok {
             return Err(Error::Network(format!(
                 "Could not reach {host}.\n{}",
-                String::from_utf8_lossy(&out.stderr).trim()
+                String::from_utf8_lossy(&ran.stderr).trim()
             )));
         }
         Ok((
-            out.stdout,
-            String::from_utf8_lossy(&out.stderr).into_owned(),
+            ran.stdout,
+            String::from_utf8_lossy(&ran.stderr).into_owned(),
         ))
     }
 
@@ -82,7 +171,7 @@ impl Curl {
 
 impl Fetcher for Curl {
     fn text(&self, url: &str) -> Result<String> {
-        let (out, _) = self.run(&["--write-out", "\n%{http_code}"], url)?;
+        let (out, _) = self.run(&["--write-out", "\n%{http_code}"], url, None)?;
         let s = String::from_utf8_lossy(&out).into_owned();
         let (body, code) = s.rsplit_once('\n').unwrap_or(("", &s));
         Self::status(code, url)?;
@@ -92,7 +181,11 @@ impl Fetcher for Curl {
     fn file(&self, url: &str, dest: &Path) -> Result<()> {
         let d = dest.to_string_lossy();
         let result = self
-            .run(&["--write-out", "%{http_code}", "--output", &d], url)
+            .run(
+                &["--write-out", "%{http_code}", "--output", &d],
+                url,
+                Some(dest),
+            )
             .and_then(|(out, _)| Self::status(&String::from_utf8_lossy(&out), url));
         if result.is_err() {
             let _ = std::fs::remove_file(dest);
@@ -110,6 +203,7 @@ impl Fetcher for Curl {
                 "%{http_code} %{url_effective}",
             ],
             &url,
+            None,
         )?;
         let s = String::from_utf8_lossy(&out).into_owned();
         let (code, effective) = s.split_once(' ').unwrap_or((&s, ""));
@@ -126,7 +220,38 @@ impl Fetcher for Curl {
 
 #[cfg(test)]
 mod tests {
-    use super::valid_tag;
+    use super::*;
+
+    fn sh(script: &str) -> Child {
+        Command::new("sh")
+            .args(["-c", script])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap()
+    }
+
+    #[test]
+    fn small_output_passes_through() {
+        let r = supervise(sh("printf hello"), 1000, None, 1000);
+        assert!(r.ok && !r.too_big);
+        assert_eq!(r.stdout, b"hello");
+    }
+
+    #[test]
+    fn output_past_the_cap_is_stopped() {
+        let r = supervise(sh("head -c 200000 /dev/zero; sleep 30"), 1000, None, 1000);
+        assert!(r.too_big && !r.ok);
+    }
+
+    #[test]
+    fn a_file_growing_past_the_cap_is_stopped() {
+        let d = tempfile::tempdir().unwrap();
+        let f = d.path().join("big");
+        let script = format!("head -c 200000 /dev/zero > '{}'; sleep 30", f.display());
+        let r = supervise(sh(&script), 1000, Some(&f), 1000);
+        assert!(r.too_big && !r.ok);
+    }
 
     #[test]
     fn tags_that_are_safe_to_use_in_urls() {

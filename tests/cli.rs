@@ -105,7 +105,7 @@ fn a_malformed_checksum_file_is_rejected() {
 }
 
 #[test]
-fn falls_back_to_source_when_the_release_has_no_binary_for_this_platform() {
+fn a_release_without_a_binary_is_never_built_silently() {
     let f = Fixture::new();
     f.fetcher
         .tags
@@ -113,19 +113,32 @@ fn falls_back_to_source_when_the_release_has_no_binary_for_this_platform() {
         .unwrap()
         .insert("Disc0wd/ifhf".into(), "v0.2.0".into()); // release exists, no assets
     let mut io = TestIo::non_interactive();
-    assert_eq!(f.run(&mut io, "install ifhf --yes"), 0, "{}", io.err);
+    assert_eq!(f.run(&mut io, "install ifhf --yes"), 1, "{}", io.out);
     assert!(
-        io.out.contains("built from source") && io.out.contains("no prebuilt x86_64-linux binary"),
+        io.err.contains("no prebuilt x86_64-linux binary") && io.err.contains("--source"),
         "{}",
-        io.out
+        io.err
     );
+    assert!(
+        f.builder.jobs.lock().unwrap().is_empty(),
+        "nothing was built"
+    );
+    assert!(!f.bin().join("ifhf").exists());
+}
+
+#[test]
+fn source_flag_builds_a_release_that_has_no_binary() {
+    let f = Fixture::new();
+    f.fetcher
+        .tags
+        .lock()
+        .unwrap()
+        .insert("Disc0wd/ifhf".into(), "v0.2.0".into());
+    let (code, io) = f.yes("install ifhf --source");
+    assert_eq!(code, 0, "{}", io.err);
     assert_eq!(
         f.builder.jobs.lock().unwrap().clone(),
-        vec!["Disc0wd/ifhf v0.2.0 cargo build --release"]
-    );
-    assert_eq!(
-        std::fs::read_to_string(f.bin().join("ifhf")).unwrap(),
-        "built-from-source:v0.2.0"
+        vec!["Disc0wd/ifhf v0.2.0"]
     );
     let rec = &f.state().tools["ifhf"];
     assert_eq!(
@@ -135,18 +148,17 @@ fn falls_back_to_source_when_the_release_has_no_binary_for_this_platform() {
 }
 
 #[test]
-fn a_tool_with_no_releases_is_built_from_the_default_branch() {
+fn a_tool_with_no_releases_needs_source_to_be_asked_for() {
     let f = Fixture::new();
     let (code, io) = f.yes("install ifhf");
+    assert_eq!(code, 1);
+    assert!(io.err.contains("no published release yet"), "{}", io.err);
+    assert!(f.builder.jobs.lock().unwrap().is_empty());
+    let (code, io) = f.yes("install ifhf --source");
     assert_eq!(code, 0, "{}", io.err);
-    assert!(
-        io.out.contains("has no published release yet"),
-        "{}",
-        io.out
-    );
     assert_eq!(
         f.builder.jobs.lock().unwrap().clone(),
-        vec!["Disc0wd/ifhf HEAD cargo build --release"]
+        vec!["Disc0wd/ifhf HEAD"]
     );
     assert_eq!(f.state().tools["ifhf"].version, "main");
 }
@@ -168,7 +180,7 @@ fn source_flag_forces_a_build_even_when_a_binary_exists() {
 fn missing_build_tools_are_explained() {
     let f = Fixture::new();
     *f.builder.fail.lock().unwrap() = true;
-    let (code, io) = f.yes("install ifhf");
+    let (code, io) = f.yes("install ifhf --source");
     assert_eq!(code, 1);
     assert!(
         io.err.contains("Could not install ifhf") && io.err.contains("git and cargo"),
@@ -505,7 +517,7 @@ fn updates_command_lists_status_without_changing_anything() {
 #[test]
 fn a_source_build_is_replaced_by_the_first_real_release() {
     let f = Fixture::new();
-    f.yes("install ifhf"); // no releases: built from main
+    f.yes("install ifhf --source"); // no releases: built from main
     assert_eq!(f.state().tools["ifhf"].version, "main");
     f.release("Disc0wd/ifhf", "ifhf", "v0.1.0", "prebuilt");
     let (code, io) = f.yes("update ifhf");
@@ -834,4 +846,42 @@ fn usage_help_and_version() {
     let mut io = TestIo::term(&[]);
     f.run(&mut io, "--help");
     assert!(io.out.contains("\x1b[1mUSAGE") && strip(&io.out) == ifhx::cli::HELP);
+}
+
+// ---- never overwrite what ifhx did not install ----------------------------------------
+
+#[test]
+fn an_existing_file_that_ifhx_did_not_install_is_left_alone() {
+    let f = Fixture::new();
+    f.release("Disc0wd/ifhf", "ifhf", "v0.1.0", "prebuilt");
+    std::fs::create_dir_all(f.bin()).unwrap();
+    std::fs::write(f.bin().join("ifhf"), "the user's own program").unwrap();
+    let (code, io) = f.yes("install ifhf");
+    assert_eq!(code, 1);
+    assert!(io.err.contains("not installed by ifhx"), "{}", io.err);
+    assert_eq!(
+        std::fs::read_to_string(f.bin().join("ifhf")).unwrap(),
+        "the user's own program"
+    );
+    assert!(f.state().tools.is_empty());
+}
+
+#[test]
+fn an_installed_file_changed_by_the_user_is_not_overwritten_by_update() {
+    let f = Fixture::new();
+    f.release("Disc0wd/ifhf", "ifhf", "v0.1.0", "prebuilt");
+    assert_eq!(f.yes("install ifhf").0, 0);
+    std::fs::write(f.bin().join("ifhf"), "patched by hand").unwrap();
+    f.release("Disc0wd/ifhf", "ifhf", "v0.2.0", "newer");
+    let (code, io) = f.yes("update ifhf");
+    assert_ne!(code, 0);
+    assert!(
+        io.err.contains("was changed after ifhx installed it"),
+        "{}",
+        io.err
+    );
+    assert_eq!(
+        std::fs::read_to_string(f.bin().join("ifhf")).unwrap(),
+        "patched by hand"
+    );
 }

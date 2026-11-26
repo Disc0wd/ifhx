@@ -46,7 +46,6 @@ pub struct SourceJob<'a> {
     pub repo: &'a str,
     pub tag: Option<&'a str>,
     pub bin: &'a str,
-    pub build: &'a str,
 }
 
 /// Builds a tool from source into `out`. Faked in tests.
@@ -74,9 +73,29 @@ impl Builder for CargoBuilder {
                     .into(),
             ));
         }
-        let work =
-            std::env::temp_dir().join(format!("ifhx-build-{}-{}", std::process::id(), job.bin));
-        let _ = std::fs::remove_dir_all(&work);
+        // A fresh, private (0700) directory that must not already exist, so another user cannot
+        // pre-create it in the shared temp directory and swap files while we build.
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.subsec_nanos())
+            .unwrap_or(0);
+        let work = std::env::temp_dir().join(format!(
+            "ifhx-build-{}-{nanos}-{}",
+            std::process::id(),
+            job.bin
+        ));
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            std::fs::DirBuilder::new()
+                .mode(0o700)
+                .create(&work)
+                .map_err(|e| {
+                    Error::Failed(format!(
+                        "Could not create a private build directory {}: {e}",
+                        work.display()
+                    ))
+                })?;
+        }
         let result = (|| -> Result<()> {
             let mut clone = Command::new("git");
             clone.args(["clone", "--quiet", "--depth", "1"]);
@@ -87,12 +106,10 @@ impl Builder for CargoBuilder {
                 .arg(format!("https://github.com/{}.git", job.repo))
                 .arg(&work);
             run(clone, "git clone")?;
-            let mut parts = job.build.split_whitespace();
-            let prog = parts
-                .next()
-                .ok_or_else(|| Error::Failed("The registry gave an empty build command.".into()))?;
-            let mut b = Command::new(prog);
-            b.args(parts).current_dir(&work);
+            // The build command is fixed here. A registry never gets to name a program to run.
+            let mut b = Command::new("cargo");
+            b.args(["build", "--release", "--locked"])
+                .current_dir(&work);
             run(b, "build")?;
             let built = work.join("target").join("release").join(job.bin);
             std::fs::copy(&built, out).map_err(|e| {
@@ -120,6 +137,15 @@ fn run(mut cmd: Command, what: &str) -> Result<()> {
             "{what} failed ({status}); see the output above."
         )))
     }
+}
+
+/// A build from source runs the project's own build scripts, so it only ever happens when the
+/// user asks for it with `--source`, never as a silent fallback.
+fn no_binary(tool: &Tool, why: &str) -> Error {
+    Error::Failed(format!(
+        "{} {why}.\n\nTo build it from source instead, run: ifhx install {} --source\n(needs git and cargo; the build runs the project's own build scripts)",
+        tool.name, tool.name
+    ))
 }
 
 /// Decide how to install `tool`. `want` pins a tag; `force_source` always builds.
@@ -151,13 +177,7 @@ pub fn plan(
         if force_source {
             return Ok(source(None, None));
         }
-        return Ok(source(
-            None,
-            Some(format!(
-                "{} has no published release yet, so it is built from source",
-                tool.name
-            )),
-        ));
+        return Err(no_binary(tool, "has no published release yet"));
     };
     if force_source {
         return Ok(source(Some(tag), None));
@@ -177,11 +197,9 @@ pub fn plan(
             dest,
             note: None,
         }),
-        Err(Error::NotFound(_)) => Ok(source(
-            Some(tag),
-            Some(format!(
-                "no prebuilt {platform} binary is published for this release, so it is built from source"
-            )),
+        Err(Error::NotFound(_)) => Err(no_binary(
+            tool,
+            &format!("has no prebuilt {platform} binary in release {tag}"),
         )),
         Err(e) => Err(e),
     }
@@ -263,7 +281,6 @@ pub fn execute(plan: &Plan, fetcher: &dyn Fetcher, builder: &dyn Builder) -> Res
                         repo: &plan.tool.repo,
                         tag: tag.as_deref(),
                         bin: &plan.tool.bin,
-                        build: &plan.tool.build,
                     },
                     &tmp,
                 )?;

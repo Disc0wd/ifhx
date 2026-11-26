@@ -4,7 +4,8 @@
 #   - releases are GitHub Releases tagged vX.Y.Z on `repo`
 #   - the binary asset is  <bin>-<platform>   (platform: x86_64-linux, aarch64-linux)
 #   - its checksum asset is <bin>-<platform>.sha256   (`sha256sum` format)
-#   - the source fallback runs `build` in a clone of the tag and takes target/release/<bin>
+#   - `ifhx install --source` runs `cargo build --release --locked` in a clone of the tag and takes
+#     target/release/<bin>. A registry cannot set a build command.
 
 [tools.ifhf]
 repo = "Disc0wd/ifhf"
