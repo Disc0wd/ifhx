@@ -799,6 +799,8 @@ fn update(env: &mut Env, opts: &Opts, names: &[String]) -> Result<()> {
     for (c, rec) in added {
         match update_added(env, st, c, rec) {
             Ok(done) => updated.push(done),
+            // Answering no to an unverified download is a choice, not a failure.
+            Err(Error::Aborted) => notes(env, &[format!("Skipped {}.", c.name)]),
             Err(e) => failed.push((c.name.clone(), e.to_string())),
         }
     }
