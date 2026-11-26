@@ -41,7 +41,8 @@ Use the slots that apply, in this order. A site may skip a slot, never reorder t
 3. **Reference.** Commands, syntax or the tool list: `.tbl`, `.syn` or `.tools`
 4. **Careful by default.** The safety section. **Always** this heading, **always** `ul.rules`
    (`<li><b>Short rule.</b><span>Why.</span></li>`), always including what is not protected
-5. **Extend.** Only where relevant (for example, adding a tool to the registry)
+5. **Extend.** Only where relevant, and only for users (for example, `ifhx add`). How to publish or
+   contribute a tool belongs in the README, never on a site
 
 ## 4.1 Footer
 
