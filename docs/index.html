@@ -199,17 +199,17 @@ footer nav{display:flex;gap:1.4rem;flex-wrap:wrap}
     <div class="solo"><pre class="out"><span class="c">$</span> ifhx available
 ifhai  Makes a downloaded AppImage just work         not installed
 ifhf   A friendly command-line frontend for Flatpak  not installed
-ifhx   Installs and updates the IFHX tool suite      installed 0.1.0
+ifhx   Installs and updates the IFHX tool suite      installed 0.2.0
 
 <span class="c">$</span> ifhx install ifhf ifhai --yes
 ifhf
   Version:   0.1.0
-  Method:    prebuilt binary (x86_64-linux), checksum verified
+  Method:    prebuilt binary (x86_64-linux), signature and checksum verified
   Install:   ~/.local/bin/ifhf
 
 ifhai
   Version:   0.1.0
-  Method:    prebuilt binary (x86_64-linux), checksum verified
+  Method:    prebuilt binary (x86_64-linux), signature and checksum verified
   Install:   ~/.local/bin/ifhai
 
 <span class="ok">Installed: ifhf 0.1.0, ifhai 0.1.0</span>
@@ -217,13 +217,13 @@ ifhai
 <span class="c">$</span> ifhx updates
 ifhai  0.1.0  0.1.0  up to date
 ifhf   0.1.0  0.1.0  up to date
-ifhx   0.1.0  0.1.0  up to date
+ifhx   0.2.0  0.2.0  up to date
 
 <span class="c">$</span> ifhx list
 ifhai  0.1.0  release  ~/.local/bin/ifhai
 ifhf   0.1.0  release  ~/.local/bin/ifhf
-ifhx   0.1.0  self     ~/.local/bin/ifhx</pre></div>
-    <p class="race-note"><span>Real output from a fresh home directory: both tools installed as checksum-verified prebuilt binaries.</span></p>
+ifhx   0.2.0  self     ~/.local/bin/ifhx</pre></div>
+    <p class="race-note"><span>Real output from ifhx 0.2.0 in a fresh home directory: both tools installed after their signatures and checksums were verified.</span></p>
 
     <div class="get">
       <pre><span># get ifhx once, then it manages everything (and itself)</span>
@@ -279,27 +279,25 @@ install -Dm755 ifhx-x86_64-linux ~/.local/bin/ifhx</pre>
 
   <section aria-labelledby="h-add">
     <h2 id="h-add">Add anything else you hate installing.</h2>
-    <div class="split">
-      <div class="prose">
-        <p>Switch it on once, and <code>ifhx add owner/name</code> installs the Linux program from that project's latest GitHub release. <code>ifhx update</code> keeps it current with the rest.</p>
-        <p>You see where it comes from and whether the download matches a published checksum before you say yes.</p>
-        <p><strong>ifhx does not vet the publisher.</strong> Add programs from projects you trust. It handles plain executables and <code>.tar.gz</code> files.</p>
-      </div>
-      <pre class="shell"><span class="p"># ~/.config/ifhx/config.toml</span>
+    <div class="prose">
+      <p>Switch it on once, and <code>ifhx add owner/name</code> installs the Linux program from that project's latest GitHub release. <code>ifhx update</code> keeps it current with the rest.</p>
+      <p>You see where it comes from and whether the download matches a published checksum before you say yes. It handles plain executables and <code>.tar.gz</code> files.</p>
+      <p><strong>ifhx does not vet the publisher.</strong> Add programs from projects you trust.</p>
+    </div>
+    <pre class="shell" style="margin-top:1.4rem"><span class="p"># ~/.config/ifhx/config.toml</span>
 [registry]
 allow_foreign = true
 
-<span class="p">$</span> ifhx add BurntSushi/ripgrep
+<span class="p">$</span> ifhx add BurntSushi/ripgrep --yes
 rg
-  From:     github.com/BurntSushi/ripgrep
-  Version:  16.0.0
-  File:     ripgrep-16.0.0-x86_64-unknown-linux-musl.tar.gz
-  Check:    matches the SHA-256 digest GitHub recorded
-            for the file
-  Trust:    not an IFHX tool; ifhx does not vet its
-            publisher
-  Install:  ~/.local/bin/rg</pre>
-    </div>
+  From:      github.com/BurntSushi/ripgrep
+  Version:   16.0.0
+  File:      ripgrep-16.0.0-x86_64-unknown-linux-musl.tar.gz
+  Check:     matches the SHA-256 digest GitHub recorded for the file
+  Trust:     not an IFHX tool; ifhx does not vet its publisher
+  Install:   ~/.local/bin/rg
+
+Installed: rg 16.0.0</pre>
   </section>
   </main>
 
