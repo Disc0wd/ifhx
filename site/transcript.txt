@@ -1,0 +1,27 @@
+$ ifhx available
+ifhai	Makes a downloaded AppImage just work	not installed
+ifhf	A friendly command-line frontend for Flatpak	not installed
+ifhx	Installs and updates the IFHX tool suite	installed 0.1.0
+
+$ ifhx install ifhf ifhai --yes
+ifhf
+  Version:   0.1.0
+  Method:    prebuilt binary (x86_64-linux), checksum verified
+  Install:   ~/.local/bin/ifhf
+
+ifhai
+  Version:   0.1.0
+  Method:    prebuilt binary (x86_64-linux), checksum verified
+  Install:   ~/.local/bin/ifhai
+
+Installed: ifhf 0.1.0, ifhai 0.1.0
+
+$ ifhx updates
+ifhai	0.1.0	0.1.0	up to date
+ifhf	0.1.0	0.1.0	up to date
+ifhx	0.1.0	0.1.0	up to date
+
+$ ifhx list
+ifhai	0.1.0	release	~/.local/bin/ifhai
+ifhf	0.1.0	release	~/.local/bin/ifhf
+ifhx	0.1.0	self	~/.local/bin/ifhx

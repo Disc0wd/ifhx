@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ifhx: one command for the whole IFHX suite</title>
+<meta name="description" content="ifhx installs, updates and removes the IFHX tools (@@NAMES@@) with verified downloads, and updates itself too.">
+<meta name="theme-color" content="#eef1f4" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0b1015" media="(prefers-color-scheme: dark)">
+<link rel="preload" href="fonts/SchibstedGrotesk.woff2" as="font" type="font/woff2" crossorigin>
+<style>
+@@CSS@@
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <a class="mark" href="#" aria-label="ifhx, top of page">ifhx</a>
+    <nav class="family" aria-label="The IFHX family"><a href="https://disc0wd.github.io/ifhf/">ifhf</a><a href="https://disc0wd.github.io/ifhai/">ifhai</a><a href="https://disc0wd.github.io/ifhx/" aria-current="page">ifhx</a><a href="@@REPO@@">Source</a></nav>
+  </div>
+
+  <main>
+  <div class="hero">
+    <h1>The whole suite, one command.</h1>
+    <p class="lede"><b>ifhx</b> installs, updates and removes the IFHX tools: @@NAMES_PROSE@@. Every download is checksum-verified before it replaces anything, and ifhx updates itself the same way.</p>
+
+    <div class="solo"><pre class="out">@@TRANSCRIPT@@</pre></div>
+    <p class="race-note"><span>Real output from a fresh home directory: both tools installed as checksum-verified prebuilt binaries.</span></p>
+
+    <div class="get">
+      <pre><span># get ifhx once, then it manages everything (and itself)</span>
+curl -fsSLO @@REPO@@/releases/latest/download/ifhx-x86_64-linux
+curl -fsSL  @@REPO@@/releases/latest/download/ifhx-x86_64-linux.sha256 | sha256sum -c -
+install -Dm755 ifhx-x86_64-linux ~/.local/bin/ifhx</pre>
+      <p class="fine">Or build it: <code>cargo install --git @@REPO@@</code>. Linux, x86_64 binaries (other platforms build from source).</p>
+    </div>
+  </div>
+
+  <section aria-labelledby="h-tools">
+    <h2 id="h-tools">The tools.</h2>
+    <p class="note">This list is generated from <a href="@@REPO@@/blob/main/registry.toml"><code>registry.toml</code></a>, the same file ifhx reads, so it can never drift from what you can actually install.</p>
+    <ul class="tools">
+@@TOOLS@@
+    </ul>
+  </section>
+
+  <section aria-labelledby="h-safe">
+    <h2 id="h-safe">Updates that cannot break what you have.</h2>
+    <div class="two">
+      <p><b>Verified before it replaces anything.</b>A binary is downloaded next to its destination, checked against the SHA-256 published in the same release, and only then moved into place in one atomic step.</p>
+      <p><b>A failure changes nothing.</b>A bad checksum, a dropped connection or a crash leaves the version you had exactly as it was, and the install record is only updated after the file is in place.</p>
+      <p><b>No binary for your platform? It builds.</b>If a release has no prebuilt file for your system, ifhx builds the tagged source with <code>cargo</code> instead.</p>
+      <p><b>Works offline.</b>The tool list comes from a fresh cache, the network, a stale cache, or a copy compiled into ifhx, in that order, so it never fails just because GitHub is unreachable.</p>
+      <p><b>Updates itself last.</b><code>ifhx update</code> updates every tool and then replaces ifhx itself, which is safe on Linux because the swap is a rename.</p>
+      <p><b>Honest about limits.</b>The checksum travels with the release, so it catches corruption, not a compromised repository. Signed releases would be the next step, and the registry is only as trustworthy as this repository's main branch.</p>
+    </div>
+  </section>
+
+  <section aria-labelledby="h-cmds">
+    <h2 id="h-cmds">Eight commands.</h2>
+    <table class="tbl">
+      <tbody>
+        <tr><td><code>ifhx install &lt;tool&gt;…</code></td><td>Install tools: a prebuilt binary, or built from source</td></tr>
+        <tr><td><code>ifhx update [&lt;tool&gt;…]</code></td><td>Update tools (default: all) and ifhx itself</td></tr>
+        <tr><td><code>ifhx updates</code></td><td>See what has a newer release, change nothing</td></tr>
+        <tr><td><code>ifhx list</code> / <code>available</code></td><td>What is installed / everything in the registry</td></tr>
+        <tr><td><code>ifhx info &lt;tool&gt;</code></td><td>Details, installed version, latest release</td></tr>
+        <tr><td><code>ifhx remove &lt;tool&gt;…</code></td><td>Remove a tool's binary (its own settings are kept)</td></tr>
+        <tr><td><code>ifhx sync</code></td><td>Refresh the tool registry now</td></tr>
+      </tbody>
+    </table>
+    <p class="note">Scripts get plain, tab-separated output and distinct exit codes; <code>--yes</code> is required when there is no terminal.</p>
+  </section>
+
+  <section aria-labelledby="h-add">
+    <h2 id="h-add">Adding a tool takes four lines.</h2>
+    <div class="split">
+      <div class="prose">
+        <p>Publish GitHub Releases tagged <code>vX.Y.Z</code> with a binary named <code>&lt;bin&gt;-x86_64-linux</code> and its <code>.sha256</code>. The release workflow in each IFHX repo does this when you push a version tag.</p>
+        <p>Then add the tool to the registry. It appears on this page, in <code>ifhx available</code> and in <code>ifhx install</code> for everyone, without a new ifhx release.</p>
+      </div>
+      <pre class="shell"><span class="p"># registry.toml</span>
+[tools.ifhz]
+repo = "Disc0wd/ifhz"
+description = "What it does"</pre>
+    </div>
+  </section>
+  </main>
+
+  <footer>
+    <span>MIT licensed. Written in Rust. Part of the IFHX family.</span>
+    <nav aria-label="Links"><a href="@@REPO@@">Source</a><a href="@@REPO@@/blob/main/README.md">README</a><a href="@@REPO@@/blob/main/LICENSE">Licence</a></nav>
+  </footer>
+</div>
+</body>
+</html>

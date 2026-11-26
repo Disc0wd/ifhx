@@ -133,4 +133,8 @@ network or your real install directory.
 - Linux only. Release assets are currently built for x86_64; `aarch64` works for tools that
   publish `<bin>-aarch64-linux` assets, and via source builds.
 - No signature verification yet (see the trust model).
-- No LICENSE file has been chosen yet.
+
+## Licence
+
+[MIT](LICENSE). Use, copy, modify and redistribute this code for any purpose, including commercial
+use, as long as the copyright notice and licence text stay with it (that notice is the credit).

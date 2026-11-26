@@ -3,6 +3,7 @@ name = "ifhx"
 version = "0.1.0"
 edition = "2024"
 description = "Installs and updates the IFHX tool suite"
+license = "MIT"
 
 [dependencies]
 serde = { version = "1.0.229", features = ["derive"] }
