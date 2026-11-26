@@ -35,6 +35,28 @@ if [ "$tool" = ifhx ] && [ "$draft" = true ]; then
   done
 fi
 
+# A signature says these changes are yours. Show them before asking for the passphrase.
+if [ "$draft" = true ]; then
+  prev=$(gh release list -R "$repo" --exclude-drafts --exclude-pre-releases --limit 20 \
+    --json tagName --jq '.[].tagName' | grep -vxF "$tag" | head -1 || true)
+  if [ -n "$prev" ]; then
+    echo "Changes in $repo from $prev to $tag:"
+    # Control characters are stripped: commit messages are text someone else may have written.
+    gh api "repos/$repo/compare/$prev...$tag" --jq '
+      "\(.total_commits) commit(s)",
+      (.commits[] | "  " + .sha[0:7] + "  " + (.commit.message | split("\n")[0])),
+      "",
+      (.files[] |
+        (if (.filename | test("^([.]github/|scripts/|build[.]rs$|Cargo[.](toml|lock)$|src/verify[.]rs$|registry[.]toml$)"))
+         then "! " else "  " end) + (.changes | tostring) + "\t" + .filename)' |
+      LC_ALL=C tr -d '\000-\010\013-\037\177'
+    echo "Lines marked ! change what gets built or who is trusted."
+    echo "Full diff: https://github.com/$repo/compare/$prev...$tag"
+    read -r -p "Are these your changes? Sign this release? [y/N] " answer
+    [ "$answer" = y ] || { echo "nothing was signed" >&2; exit 1; }
+  fi
+fi
+
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 gh release download "$tag" -R "$repo" -D "$work" -p "$tool-*-linux" -p "$tool-*-linux.sha256"

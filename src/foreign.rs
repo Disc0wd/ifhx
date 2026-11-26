@@ -17,6 +17,8 @@ use std::path::{Component, Path, PathBuf};
 
 /// A decompression bomb stops here, long before it can fill the disk.
 const UNPACKED_MAX: u64 = 2 << 30;
+/// Long names and PAX records are held in memory while read; real ones are a few hundred bytes.
+const NAME_RECORD_MAX: u64 = 64 * 1024;
 
 pub struct Staged {
     /// The command name: the executable's own name inside an archive, else the repository name.
@@ -93,6 +95,22 @@ fn extract(archive: &Path, repo_name: &str, out: &Path) -> Result<String> {
         let f = std::fs::File::open(archive)?;
         Ok(tar::Archive::new(GzDecoder::new(f).take(UNPACKED_MAX)))
     };
+    // Look at the raw records first: the normal reader buffers a long-name record whole, so a tiny
+    // archive declaring a gigabyte one could exhaust memory.
+    for e in open()?.entries().map_err(bad_archive)?.raw(true) {
+        let e = e.map_err(bad_archive)?;
+        let t = e.header().entry_type();
+        if (t.is_gnu_longname()
+            || t.is_gnu_longlink()
+            || t.is_pax_local_extensions()
+            || t.is_pax_global_extensions())
+            && e.size() > NAME_RECORD_MAX
+        {
+            return Err(Error::Failed(
+                "The archive has an oversized name record, so it was not unpacked.".into(),
+            ));
+        }
+    }
     let mut members = Vec::new();
     for (index, e) in open()?.entries().map_err(bad_archive)?.enumerate() {
         let e = e.map_err(bad_archive)?;
@@ -351,6 +369,91 @@ mod tests {
         let a = d.path().join("a.tar.gz");
         std::fs::write(&a, b"not gzip at all").unwrap();
         assert!(extract(&a, "tool", &d.path().join("o")).is_err());
+    }
+
+    #[test]
+    fn a_huge_name_record_is_refused() {
+        let name = vec![b'a'; 1 << 20];
+        let (r, _) = run(&[
+            (b"././@LongLink", 0o644, tar::EntryType::GNULongName, &name),
+            (b"tool", 0o755, Regular, b"x"),
+        ]);
+        assert!(r.unwrap_err().to_string().contains("oversized name record"));
+    }
+
+    /// Recompute a header's checksum so a mutated header is parsed rather than rejected outright.
+    fn fix_checksum(block: &mut [u8]) {
+        block[148..156].fill(b' ');
+        let sum: u32 = block.iter().map(|&b| b as u32).sum();
+        block[148..156].copy_from_slice(format!("{sum:06o}\0 ").as_bytes());
+    }
+
+    /// Thousands of damaged archives: whatever is in them, no panic and nothing written but `out`.
+    #[test]
+    fn corrupted_archives_never_panic_or_write_elsewhere() {
+        let mut tar_bytes = Vec::new();
+        GzDecoder::new(
+            &tarball(&[
+                (b"dir/readme", 0o644, Regular, b"docs"),
+                (
+                    b"././@LongLink",
+                    0o644,
+                    tar::EntryType::GNULongName,
+                    b"dir/long\0",
+                ),
+                (b"dir/tool", 0o755, Regular, &[7u8; 900]),
+                (b"link", 0o755, Symlink, b""),
+            ])[..],
+        )
+        .read_to_end(&mut tar_bytes)
+        .unwrap();
+        let headers: Vec<usize> = (0..tar_bytes.len())
+            .step_by(512)
+            .filter(|&i| tar_bytes.get(i + 257..i + 262) == Some(b"ustar"))
+            .collect();
+        assert!(headers.len() >= 4);
+        let mut seed = 0x2545_F491_4F6C_DD1Du64;
+        let mut rand = move |n: usize| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed % n.max(1) as u64) as usize
+        };
+        let d = tempfile::tempdir().unwrap();
+        let (a, out) = (d.path().join("a.tar.gz"), d.path().join("out"));
+        let mut parsed = 0;
+        for i in 0..4000 {
+            let mut t = tar_bytes.clone();
+            for _ in 0..1 + rand(8) {
+                // Mostly aim at header fields, where the parsing happens.
+                let h = headers[rand(headers.len())];
+                let at = if rand(5) == 0 {
+                    rand(t.len())
+                } else {
+                    h + rand(512)
+                };
+                t[at] = rand(256) as u8;
+            }
+            for &h in &headers {
+                fix_checksum(&mut t[h..h + 512]);
+            }
+            if rand(10) == 0 {
+                t.truncate(rand(t.len()));
+            }
+            let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+            gz.write_all(&t).unwrap();
+            let mut z = gz.finish().unwrap();
+            if i % 4 == 0 {
+                let at = rand(z.len());
+                z[at] ^= 1 + rand(255) as u8;
+            }
+            std::fs::write(&a, &z).unwrap();
+            parsed += extract(&a, "tool", &out).is_ok() as u32;
+            let _ = std::fs::remove_file(&out);
+            assert_eq!(std::fs::read_dir(d.path()).unwrap().count(), 1, "round {i}");
+        }
+        // The damage must be shallow often enough to exercise the code behind the parser.
+        assert!(parsed > 400 && parsed < 4000, "{parsed}");
     }
 
     #[test]

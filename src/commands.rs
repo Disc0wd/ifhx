@@ -386,6 +386,45 @@ fn already_there(dest: &Path) -> Error {
     ))
 }
 
+/// Another command of this name elsewhere on the system. The program's name comes from the
+/// publisher, so without this a release could ship a `sudo` or `git` that runs in place of yours.
+fn shadows(env: &Env, name: &str, install_dir: &Path) -> Option<PathBuf> {
+    const SYSTEM: [&str; 6] = [
+        "/usr/local/sbin",
+        "/usr/local/bin",
+        "/usr/sbin",
+        "/usr/bin",
+        "/sbin",
+        "/bin",
+    ];
+    let path = env.path_var.clone().unwrap_or_default();
+    std::env::split_paths(&path)
+        .chain(SYSTEM.iter().map(PathBuf::from))
+        .filter(|d| d.is_absolute() && d != install_dir)
+        .map(|d| d.join(name))
+        .find(|p| p.is_file())
+}
+
+/// Something that cannot be verified is installed only after a person says yes. `--yes` and
+/// `confirm = false` do not count, and pressing Enter means no.
+fn confirm_unverified(env: &mut Env, st: Style, question: &str) -> Result<()> {
+    if !env.io.interactive() {
+        return Err(Error::NeedsConfirmation(
+            "The publisher gave no checksum, so this download cannot be verified. ifhx only installs unverified programs after you confirm at a terminal; --yes does not apply.".into(),
+        ));
+    }
+    match env
+        .io
+        .ask(&output::prompt(st, question, false))
+        .as_deref()
+        .map(str::to_lowercase)
+        .as_deref()
+    {
+        Some("y") | Some("yes") => Ok(()),
+        _ => Err(Error::Aborted),
+    }
+}
+
 fn describe_added(st: Style, s: &Staged, dest: &Path) -> String {
     let check = match s.checked {
         Some(how) => format!("matches {how}"),
@@ -455,13 +494,19 @@ fn add(env: &mut Env, opts: &Opts, target: &str) -> Result<()> {
     if std::fs::symlink_metadata(&dest).is_ok() {
         return Err(already_there(&dest));
     }
+    if let Some(other) = shadows(env, &name, &dir) {
+        return Err(Error::Failed(format!(
+            "{repo} installs a program called '{name}', but {} already provides that command. Two of them would leave it unclear which one runs, so ifhx will not add it.",
+            other.display()
+        )));
+    }
     env.io.out(&describe_added(st, &staged, &dest));
-    confirm(
-        env,
-        st,
-        &format!("Add {name} from {repo}?"),
-        opts.yes || !env.config.general.confirm,
-    )?;
+    let question = format!("Add {name} from {repo}?");
+    if staged.checked.is_none() {
+        confirm_unverified(env, st, &question)?;
+    } else {
+        confirm(env, st, &question, opts.yes || !env.config.general.confirm)?;
+    }
     let done = format!("{name} {}", version::display(&staged.version));
     let record = foreign::commit(staged, &dest)?;
     state.tools.insert(name, record);
@@ -474,7 +519,7 @@ fn add(env: &mut Env, opts: &Opts, target: &str) -> Result<()> {
 }
 
 /// Update one tool that was added with `ifhx add`, with the same checks as when it was added.
-fn update_added(env: &mut Env, c: &Check, rec: &Record) -> Result<String> {
+fn update_added(env: &mut Env, st: Style, c: &Check, rec: &Record) -> Result<String> {
     let repo = &c.tool.repo;
     let release = github::latest_release(env.fetcher, repo)?;
     if !version::is_newer(&release.tag, &rec.version) {
@@ -504,6 +549,14 @@ fn update_added(env: &mut Env, c: &Check, rec: &Record) -> Result<String> {
             "{} was verified when it was added, but this release publishes no checksum, so it was not installed.",
             c.name
         )));
+    }
+    if staged.checked.is_none() {
+        env.io.out(&describe_added(st, &staged, &c.dest));
+        confirm_unverified(
+            env,
+            st,
+            &format!("Update {} to this unverified download?", c.name),
+        )?;
     }
     let done = format!("{} {}", c.name, version::display(&staged.version));
     let record = foreign::commit(staged, &c.dest)?;
@@ -744,7 +797,7 @@ fn update(env: &mut Env, opts: &Opts, names: &[String]) -> Result<()> {
     };
     let mut updated = Vec::new();
     for (c, rec) in added {
-        match update_added(env, c, rec) {
+        match update_added(env, st, c, rec) {
             Ok(done) => updated.push(done),
             Err(e) => failed.push((c.name.clone(), e.to_string())),
         }

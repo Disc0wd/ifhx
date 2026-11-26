@@ -89,15 +89,17 @@ any other tool (`list` shows it as `github`). Switching `allow_foreign` off agai
 these tools; `remove` still works.
 
 - **What is checked:** the download must match the SHA-256 GitHub recorded for the file, or a
-  checksum file in the same release. If the publisher gives neither, the plan says **UNVERIFIED**
-  (`--yes` accepts that). A tool that was verified when added is never updated to an unverified release.
+  checksum file in the same release. If the publisher gives neither, the plan says **UNVERIFIED** and
+  `ifhx` installs or updates it only after you answer yes at a terminal; `--yes` does not apply. A
+  tool that was verified when added is never updated to an unverified release.
 - **What is not checked:** whether the publisher is honest or the program safe. These programs are
   not signed with the IFHX key, and a checksum published next to a file only shows the download
   arrived intact.
 - **What is supported:** one program per repository, shipped for Linux as a plain executable or a
   `.tar.gz`. If several files or executables could be meant, `ifhx` lists them and stops. AppImages
   belong to [ifhai](https://github.com/Disc0wd/ifhai). Nothing added this way is built from source.
-- An added program can never take the name of an IFHX tool or replace a file `ifhx` did not install.
+- An added program can never take the name of an IFHX tool, replace a file `ifhx` did not install, or
+  use the name of a command that already exists on your `PATH` or in the system directories.
 
 ## How it works
 
@@ -183,6 +185,9 @@ on your `PATH`.
    ```bash
    scripts/sign-release.sh <tool> <tag>
    ```
+
+   It first lists the commits and files changed since the previous release and asks you to confirm
+   they are yours. Read them: the signature vouches for whatever CI built from them.
 
 3. Add a table to `registry.toml`:
 

@@ -153,12 +153,26 @@ fn an_unverified_program_says_so_and_declining_leaves_nothing() {
     assert!(io.out.contains("UNVERIFIED"), "{}", io.out);
     assert!(installed_files(&f).is_empty(), "{:?}", installed_files(&f));
     assert!(f.state().tools.is_empty());
-    // Without a terminal and without --yes it stops too.
-    assert_eq!(
-        f.run(&mut TestIo::non_interactive(), "add someone/gizmo"),
-        5
-    );
+    // --yes does not count for something unverifiable, and neither does just pressing Enter.
+    let (code, io) = f.yes("add someone/gizmo");
+    assert_eq!(code, 5, "{}", io.err);
+    assert!(io.err.contains("--yes does not apply"), "{}", io.err);
+    let mut enter = TestIo::answering(&[""]);
+    assert_eq!(f.run(&mut enter, "add someone/gizmo --yes"), 6);
+    assert!(enter.asked[0].contains("[y/N]"), "{:?}", enter.asked);
     assert!(installed_files(&f).is_empty());
+    let mut yes = TestIo::answering(&["y"]);
+    assert_eq!(f.run(&mut yes, "add someone/gizmo"), 0, "{}", yes.err);
+    assert_eq!(installed_files(&f), ["gizmo"]);
+    // Updating it is just as unverifiable, so it asks again.
+    publish(&f, REPO, "v1.1.0", ASSET, &elf("2"), false);
+    let (code, io) = f.yes("update");
+    assert_eq!(code, 1);
+    assert!(io.err.contains("--yes does not apply"), "{}", io.err);
+    assert_eq!(std::fs::read(f.bin().join("gizmo")).unwrap(), elf("1"));
+    let mut both = TestIo::answering(&["y", "y"]);
+    assert_eq!(f.run(&mut both, "update"), 0, "{}", both.err);
+    assert_eq!(std::fs::read(f.bin().join("gizmo")).unwrap(), elf("2"));
 }
 
 #[test]
@@ -218,6 +232,35 @@ fn added_programs_cannot_take_an_ifhx_name_or_replace_a_file() {
         "mine"
     );
     assert_eq!(installed_files(&f), ["gizmo"]);
+}
+
+#[test]
+fn a_program_that_would_shadow_another_command_is_refused() {
+    let mut f = allowed();
+    let other = f.dir.path().join("elsewhere");
+    std::fs::create_dir_all(&other).unwrap();
+    std::fs::write(other.join("gizmo"), "the one already on PATH").unwrap();
+    f.path_var = Some(format!("{}:{}", f.bin().display(), other.display()));
+    publish(&f, REPO, "v1.0.0", ASSET, &elf("1"), true);
+    let (code, io) = f.yes("add someone/gizmo");
+    assert_eq!(code, 1);
+    assert!(
+        io.err.contains("already provides that command"),
+        "{}",
+        io.err
+    );
+    assert!(installed_files(&f).is_empty() && f.state().tools.is_empty());
+    // System commands count even when PATH does not list their directory.
+    f.path_var = Some(f.bin().display().to_string());
+    publish(&f, "someone/sh", "v1", "sh-linux-x86_64", &elf("x"), true);
+    let (code, io) = f.yes("add someone/sh");
+    assert_eq!(code, 1);
+    assert!(
+        io.err.contains("already provides that command"),
+        "{}",
+        io.err
+    );
+    assert!(installed_files(&f).is_empty());
 }
 
 fn added() -> Fixture {
